@@ -1,59 +1,49 @@
 # RocketMap
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.0.0.
+A real-time missile alert map for Israel, built with Angular and Leaflet. It polls the [Pikud HaOref (Home Front Command)](https://www.oref.org.il) API and displays active alert areas on an interactive map.
 
-## Development server
+## Features
 
-To start a local development server, run:
+- **Live alert polling** — fetches the Pikud HaOref API every 3 seconds and accumulates active alerts per city
+- **City boundary polygons** — highlights the actual municipal boundary of each alerted city (via OpenStreetMap / Nominatim), with a circle fallback for areas without polygon data
+- **Alert types** — rockets/missiles shown in red, hostile aircraft in blue
+- **Per-city state tracking** — a city stays highlighted until an explicit "האירוע הסתיים" (event ended) response removes it; an empty API response does not clear the map
+- **Iran trajectory** — when a "התראה מקדימה" (early warning) is received, an animated missile marker travels from central Iran to the centroid of all alerted cities over a 12-minute countdown, matching the estimated ballistic flight time
+- **Demo mode** — built-in scenarios to test all alert types and the Iran trajectory without waiting for a real event
 
-```bash
-ng serve
-```
+## Data Sources
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+| Source | Purpose |
+|--------|---------|
+| [Pikud HaOref](https://www.oref.org.il/WarningMessages/alert/alerts.json) | Live missile alerts |
+| [Nominatim / OpenStreetMap](https://nominatim.openstreetmap.org) | City boundary polygons |
 
-## Code scaffolding
-
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
-
-```bash
-ng generate component component-name
-```
-
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+## Getting Started
 
 ```bash
-ng generate --help
+npm install
+npm start
 ```
 
-## Building
+Then open `http://localhost:4200`.
 
-To build the project run:
+> The dev server proxies both the Pikud HaOref API and Nominatim to avoid CORS issues. See `proxy.conf.json` for details.
 
-```bash
-ng build
-```
+## Alert Categories
 
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
+| Category | Hebrew | Color |
+|----------|--------|-------|
+| Rockets & missiles | ירי רקטות וטילים | Red |
+| Hostile aircraft | חדירת כלי טיס עוין | Blue |
+| Early warning (Iran) | התראה מקדימה | Red + trajectory |
 
-## Running unit tests
+## Tech Stack
 
-To execute unit tests with the [Karma](https://karma-runner.github.io) test runner, use the following command:
+- [Angular 21](https://angular.dev) — standalone components, signals
+- [Leaflet](https://leafletjs.com) — interactive map
+- [OpenStreetMap](https://www.openstreetmap.org) — map tiles
+- [Nominatim](https://nominatim.openstreetmap.org) — city boundary polygons
 
-```bash
-ng test
-```
+## Note
 
-## Running end-to-end tests
-
-For end-to-end (e2e) testing, run:
-
-```bash
-ng e2e
-```
-
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+This project is intended for informational and educational purposes. In a real emergency, always follow official Pikud HaOref instructions.
