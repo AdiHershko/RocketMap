@@ -1,0 +1,27 @@
+{
+  "/api/oref": {
+    "target": "https://www.oref.org.il",
+    "changeOrigin": true,
+    "secure": true,
+    "pathRewrite": {
+      "^/api/oref": ""
+    },
+    "headers": {
+      "Referer": "https://www.oref.org.il/",
+      "X-Requested-With": "XMLHttpRequest"
+    },
+    "logLevel": "warn"
+  },
+  "/api/nominatim": {
+    "target": "https://nominatim.openstreetmap.org",
+    "changeOrigin": true,
+    "secure": true,
+    "pathRewrite": {
+      "^/api/nominatim": ""
+    },
+    "headers": {
+      "User-Agent": "RocketMap/1.0 (israel-alert-map)"
+    },
+    "logLevel": "warn"
+  }
+}
