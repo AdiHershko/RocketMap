@@ -6,15 +6,15 @@ export interface CityAlert {
   title: string;
   desc: string;
   timestamp: number;
+  clearing?: boolean; // true = all-clear received, show green briefly
 }
 
 const ALL_CLEAR_TITLE = 'האירוע הסתיים';
+const CLEAR_DISPLAY_MS = 2500; // how long to show green before removing
 
 @Injectable({ providedIn: 'root' })
 export class AlertService implements OnDestroy {
   private intervalId: ReturnType<typeof setInterval> | null = null;
-
-  // Accumulated active alerts keyed by city name
   private state = new Map<string, CityAlert>();
   readonly activeCities$ = new BehaviorSubject<Map<string, CityAlert>>(new Map());
 
@@ -43,7 +43,7 @@ export class AlertService implements OnDestroy {
       if (!res.ok) return;
 
       const text = (await res.text()).trim().replace(/^\uFEFF/, '');
-      if (!text) return; // empty = nothing changed
+      if (!text) return;
 
       const data = JSON.parse(text) as {
         id: string;
@@ -59,14 +59,22 @@ export class AlertService implements OnDestroy {
 
       if (data.title === ALL_CLEAR_TITLE) {
         for (const city of data.data) {
-          if (this.state.has(city)) {
-            this.state.delete(city);
+          const existing = this.state.get(city);
+          if (existing && !existing.clearing) {
+            // Mark as clearing — show green briefly then remove
+            this.state.set(city, { ...existing, title: ALL_CLEAR_TITLE, clearing: true });
             changed = true;
+            setTimeout(() => this.removeClearedCity(city), CLEAR_DISPLAY_MS);
           }
         }
       } else {
         for (const city of data.data) {
-          this.state.set(city, { cat: data.cat, title: data.title, desc: data.desc, timestamp: Date.now() });
+          this.state.set(city, {
+            cat: data.cat,
+            title: data.title,
+            desc: data.desc,
+            timestamp: Date.now(),
+          });
           changed = true;
         }
       }
@@ -75,7 +83,14 @@ export class AlertService implements OnDestroy {
         this.activeCities$.next(new Map(this.state));
       }
     } catch {
-      // ignore parse/network errors, preserve existing state
+      // ignore parse/network errors, preserve state
+    }
+  }
+
+  private removeClearedCity(city: string): void {
+    if (this.state.get(city)?.clearing) {
+      this.state.delete(city);
+      this.activeCities$.next(new Map(this.state));
     }
   }
 }

@@ -6,22 +6,12 @@ import { CityPolygonService } from './city-polygon.service';
 import { CITY_COORDINATES } from './city-coordinates';
 import { Subscription } from 'rxjs';
 
-const ALERT_STYLE: L.PathOptions = {
-  color: '#ff2200',
-  fillColor: '#ff4400',
-  fillOpacity: 0.4,
-  weight: 2,
-};
-
-const AIRCRAFT_STYLE: L.PathOptions = {
-  color: '#0055ff',
-  fillColor: '#3377ff',
-  fillOpacity: 0.4,
-  weight: 2,
-};
-
-function styleForCat(cat: string): L.PathOptions {
-  return cat === '2' ? AIRCRAFT_STYLE : ALERT_STYLE;
+function styleForAlert(alert: CityAlert): L.PathOptions {
+  const base = { fillOpacity: 0.4, weight: 2 };
+  if (alert.clearing)                        return { ...base, color: '#00aa44', fillColor: '#00cc55' }; // green
+  if (alert.title === EARLY_WARNING_TITLE)   return { ...base, color: '#cc6600', fillColor: '#ff8800' }; // orange
+  if (alert.cat === '2')                     return { ...base, color: '#0055ff', fillColor: '#3377ff' }; // blue
+  return                                            { ...base, color: '#cc0000', fillColor: '#ff2200' }; // red
 }
 
 const SOURCE_IRAN: [number, number] = [32.4, 53.7]; // central Iran
@@ -34,12 +24,45 @@ function centroid(coords: [number, number][]): [number, number] {
   return [lat, lng];
 }
 
-function interpolate(
+// Convert lat/lng (degrees) to a unit Cartesian vector
+function toCartesian(lat: number, lng: number): [number, number, number] {
+  const φ = (lat * Math.PI) / 180;
+  const λ = (lng * Math.PI) / 180;
+  return [Math.cos(φ) * Math.cos(λ), Math.cos(φ) * Math.sin(λ), Math.sin(φ)];
+}
+
+// Convert a unit Cartesian vector back to [lat, lng] degrees
+function fromCartesian(v: [number, number, number]): [number, number] {
+  return [
+    (Math.asin(Math.max(-1, Math.min(1, v[2]))) * 180) / Math.PI,
+    (Math.atan2(v[1], v[0]) * 180) / Math.PI,
+  ];
+}
+
+// Spherical Linear Interpolation — single point at fraction t along great circle
+function slerp(
   from: [number, number],
   to: [number, number],
   t: number,
 ): [number, number] {
-  return [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
+  const a = toCartesian(from[0], from[1]);
+  const b = toCartesian(to[0], to[1]);
+  const dot = Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]));
+  const omega = Math.acos(dot);
+  if (omega < 1e-10) return from;
+  const sinOmega = Math.sin(omega);
+  const f1 = Math.sin((1 - t) * omega) / sinOmega;
+  const f2 = Math.sin(t * omega) / sinOmega;
+  return fromCartesian([f1 * a[0] + f2 * b[0], f1 * a[1] + f2 * b[1], f1 * a[2] + f2 * b[2]]);
+}
+
+// Sample the great circle into numPoints segments for the polyline
+function greatCirclePath(
+  from: [number, number],
+  to: [number, number],
+  numPoints = 120,
+): [number, number][] {
+  return Array.from({ length: numPoints + 1 }, (_, i) => slerp(from, to, i / numPoints));
 }
 
 function bearing(from: [number, number], to: [number, number]): number {
@@ -112,14 +135,16 @@ export class App implements AfterViewInit, OnDestroy {
   private map!: L.Map;
   private cityLayers = new Map<string, L.Layer>();
   private iranTrajectory: IranTrajectory | null = null;
+  private aircraftLayers: L.Layer[] = [];
   private alertSub!: Subscription;
 
-  // Iran scenario: batches of cities ordered east→west (decreasing longitude)
-  // Each inner array is one wave, appearing together with a short delay between waves
+  // Iran scenario: east→west band across central Israel (~32.08° ± 7km lat)
+  // Longitudes: 34.96 → 34.88 → 34.78  (east to west, ~18km total spread)
+  // N-S spread: 32.116 – 32.053 = ~7km  ✓
   private static readonly IRAN_WAVES: string[][] = [
-    ['קצרין', 'ירושלים', 'טבריה'],           // east (lon ~35.2–35.7)
-    ['תל אביב - מרכז העיר', 'חיפה', 'באר שבע'], // center (lon ~34.8–35.0)
-    ['אשדוד', 'נתניה', 'אשקלון'],             // west (lon ~34.6–34.9)
+    ['ראש העין', 'כפר קאסם', 'אלעד'],                   // east  (lon ~34.95–34.98)
+    ['פתח תקווה', 'קריית אונו', 'גבעת שמואל'],           // center (lon ~34.86–34.89)
+    ['בני ברק', 'רמת גן', 'גבעתיים', 'תל אביב - מרכז העיר'], // west (lon ~34.78–34.83)
   ];
 
   private static readonly DEMO_SCENARIOS: Map<string, CityAlert>[] = [
@@ -156,6 +181,7 @@ export class App implements AfterViewInit, OnDestroy {
     this.alertService.stopPolling();
     this.alertSub?.unsubscribe();
     this.clearIranTrajectory();
+    this.clearAircraftTrajectory();
   }
 
   protected triggerDemo(): void {
@@ -225,7 +251,9 @@ export class App implements AfterViewInit, OnDestroy {
 
   private async applyState(cities: Map<string, CityAlert>): Promise<void> {
     for (const [city, layer] of this.cityLayers) {
-      if (!cities.has(city)) {
+      const updated = cities.get(city);
+      // Remove if gone, or if it just transitioned to clearing (force redraw in green)
+      if (!updated || updated.clearing) {
         layer.remove();
         this.cityLayers.delete(city);
       }
@@ -255,6 +283,8 @@ export class App implements AfterViewInit, OnDestroy {
   }
 
   private updateTrajectory(cities: Map<string, CityAlert>): void {
+    this.updateAircraftTrajectory(cities);
+
     const earlyWarnCoords = [...cities.entries()]
       .filter(([, a]) => a.title === EARLY_WARNING_TITLE)
       .map(([city]) => CITY_COORDINATES[city])
@@ -276,7 +306,7 @@ export class App implements AfterViewInit, OnDestroy {
     if (this.iranTrajectory) {
       if (this.iranTrajectory.startTime === startTime) {
         this.iranTrajectory.target = target;
-        this.iranTrajectory.line.setLatLngs([SOURCE_IRAN, target]);
+        this.iranTrajectory.line.setLatLngs(greatCirclePath(SOURCE_IRAN, target));
         return;
       }
       this.clearIranTrajectory();
@@ -289,7 +319,7 @@ export class App implements AfterViewInit, OnDestroy {
     const angle = bearing(SOURCE_IRAN, target);
 
     // Static dashed line from Iran to target
-    const line = L.polyline([SOURCE_IRAN, target], {
+    const line = L.polyline(greatCirclePath(SOURCE_IRAN, target), {
       color: '#ff4400',
       weight: 3,
       dashArray: '10 7',
@@ -313,7 +343,7 @@ export class App implements AfterViewInit, OnDestroy {
     }).addTo(this.map);
 
     // Animated missile marker
-    const initialPos = interpolate(SOURCE_IRAN, target, 0);
+    const initialPos = slerp(SOURCE_IRAN, target, 0);
     const missileMarker = L.marker(initialPos, {
       icon: missileIcon(angle, Math.ceil(IRAN_FLIGHT_MS / 1000)),
       interactive: false,
@@ -323,7 +353,7 @@ export class App implements AfterViewInit, OnDestroy {
     const tick = () => {
       const elapsed = Date.now() - startTime;
       const t = Math.min(elapsed / IRAN_FLIGHT_MS, 1);
-      const pos = interpolate(SOURCE_IRAN, this.iranTrajectory!.target, t);
+      const pos = slerp(SOURCE_IRAN, this.iranTrajectory!.target, t);
       const secondsLeft = Math.max(0, Math.ceil((IRAN_FLIGHT_MS - elapsed) / 1000));
       const currentAngle = bearing(SOURCE_IRAN, this.iranTrajectory!.target);
 
@@ -351,8 +381,57 @@ export class App implements AfterViewInit, OnDestroy {
     this.iranTrajectory = null;
   }
 
+  private updateAircraftTrajectory(cities: Map<string, CityAlert>): void {
+    this.clearAircraftTrajectory();
+
+    // Collect aircraft-alerted cities sorted by timestamp
+    const points = [...cities.entries()]
+      .filter(([, a]) => a.cat === '2' && !a.clearing)
+      .sort(([, a], [, b]) => a.timestamp - b.timestamp)
+      .map(([city]) => CITY_COORDINATES[city])
+      .filter((c): c is [number, number] => !!c);
+
+    if (points.length < 2) return;
+
+    const line = L.polyline(points, {
+      color: '#3377ff',
+      weight: 4,
+      dashArray: '10 7',
+      opacity: 1,
+      pane: 'trajectoryPane',
+    });
+    line.addTo(this.map);
+    this.aircraftLayers.push(line);
+
+    // Arrowhead at the leading city
+    const tip = points[points.length - 1];
+    const prev = points[points.length - 2];
+    const angle = bearing(prev, tip);
+
+    const arrowIcon = L.divIcon({
+      className: '',
+      html: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+               style="overflow:visible;display:block;filter:drop-shadow(0 0 3px rgba(0,100,255,0.8))">
+               <polygon points="12,2 22,22 12,17 2,22"
+                 fill="#3377ff" stroke="white" stroke-width="1.5"
+                 transform="rotate(${angle},12,12)"/>
+             </svg>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+
+    const arrow = L.marker(tip, { icon: arrowIcon, interactive: false });
+    arrow.addTo(this.map);
+    this.aircraftLayers.push(arrow);
+  }
+
+  private clearAircraftTrajectory(): void {
+    for (const layer of this.aircraftLayers) layer.remove();
+    this.aircraftLayers = [];
+  }
+
   private async buildLayer(city: string, alert: CityAlert): Promise<L.Layer | null> {
-    const style = styleForCat(alert.cat);
+    const style = styleForAlert(alert);
     const popup = `<b>${city}</b><br>${alert.title}`;
 
     const feature = await this.cityPolygonService.fetchPolygon(city);
