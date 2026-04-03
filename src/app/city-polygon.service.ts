@@ -1,4 +1,5 @@
 import { Injectable } from '@angular/core';
+import { environment } from '../environments/environment';
 
 @Injectable({ providedIn: 'root' })
 export class CityPolygonService {
@@ -56,7 +57,7 @@ export class CityPolygonService {
 
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const res = await fetch(`/api/nominatim/search?${params}`, {
+        const res = await fetch(`${environment.nominatimBase}/search?${params}`, {
           headers: { 'Accept-Language': 'he' },
         });
 

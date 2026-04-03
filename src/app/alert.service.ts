@@ -1,5 +1,6 @@
 import { Injectable, OnDestroy } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
+import { environment } from '../environments/environment';
 
 export interface CityAlert {
   cat: string;
@@ -36,8 +37,12 @@ export class AlertService implements OnDestroy {
 
   private async fetchAlerts(): Promise<void> {
     try {
-      const res = await fetch('/api/oref/WarningMessages/alert/alerts.json', {
+      const res = await fetch(`${environment.orefBase}/WarningMessages/alert/alerts.json`, {
         cache: 'no-store',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          Referer: 'https://www.oref.org.il/',
+        },
       });
 
       if (!res.ok) return;
