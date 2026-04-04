@@ -10,7 +10,7 @@ export class CityPolygonService {
   // Nominatim: max 1 req/s. Use 1.2s gap to be safe.
   private queue: Array<() => Promise<void>> = [];
   private processingQueue = false;
-  private readonly RATE_MS = 1200;
+  private readonly RATE_MS = 100;
   private readonly RETRY_AFTER_429_MS = 10000;
 
   async fetchPolygon(hebrewName: string): Promise<GeoJSON.Feature | null> {
