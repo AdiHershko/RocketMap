@@ -1,7 +1,10 @@
 export default async function handler(req, res) {
-  const path = req.url.replace('/api/oref', '');
+  const pathSegments = req.query.path || [];
+  const { path: _, ...queryParams } = req.query;
+  const queryString = new URLSearchParams(queryParams).toString();
+  const targetUrl = `https://www.oref.org.il/${pathSegments.join('/')}${queryString ? '?' + queryString : ''}`;
 
-  const response = await fetch(`https://www.oref.org.il${path}`, {
+  const response = await fetch(targetUrl, {
     headers: {
       'X-Requested-With': 'XMLHttpRequest',
       Referer: 'https://www.oref.org.il/',
