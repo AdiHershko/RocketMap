@@ -9,7 +9,10 @@ import { Subscription } from 'rxjs';
 const CAT_EARLY_WARNING = '5';
 const CAT_AIRCRAFT      = '2';
 
-const EARLY_WARNING_TITLE = 'התראה מקדימה';
+const EARLY_WARNING_TITLE = 'בדקות הקרובות צפויות להתקבל התראות באזורכם';
+const ROCKETS_TITLE       = 'ירי רקטות וטילים';
+const AIRCRAFT_TITLE      = 'חדירת כלי טיס עוין';
+const ALL_CLEAR_TITLE     = 'האירוע הסתיים';
 
 function styleForAlert(alert: CityAlert): L.PathOptions {
   const base = { fillOpacity: 0.4, weight: 2 };
@@ -192,14 +195,12 @@ export class App implements AfterViewInit, OnDestroy {
 
   private historySub!: Subscription;
 
-  protected categoryLabel(cat: string): string {
-    switch (cat) {
-      case '1': return 'Rockets';
-      case '2': return 'Aircraft';
-      case '5': case '14': return 'Early Warning';
-      case '10': case '13': return 'All Clear';
-      default: return 'Alert';
-    }
+  protected categoryLabel(title: string): string {
+    if (title.includes('הסתיים'))          return 'All Clear';
+    if (title.includes('בדקות הקרובות')) return 'Early Warning';
+    if (title.includes('כלי טיס'))        return 'Aircraft';
+    if (title.includes('טילים'))           return 'Rockets';
+    return 'Alert';
   }
 
   protected formatTime(ts: number): string {
@@ -298,7 +299,7 @@ export class App implements AfterViewInit, OnDestroy {
     // Phase 2: Rocket alert (trajectory stays visible)
     const rocketTime = Date.now();
     for (const city of accumulated.keys()) {
-      accumulated.set(city, { cat: '1', title: 'ירי רקטות וטילים', desc: '', timestamp: rocketTime });
+      accumulated.set(city, { cat: '1', title: ROCKETS_TITLE, desc: '', timestamp: rocketTime });
     }
     this.applyState(new Map(accumulated));
 
@@ -322,7 +323,7 @@ export class App implements AfterViewInit, OnDestroy {
       if (!this.demoRunning) { this.demoRunning = false; return; }
       const now = Date.now();
       for (const city of wave) {
-        accumulated.set(city, { cat: '1', title: 'ירי רקטות וטילים', desc: '', timestamp: now });
+        accumulated.set(city, { cat: '1', title: ROCKETS_TITLE, desc: '', timestamp: now });
       }
       this.applyState(new Map(accumulated));
       await new Promise((r) => setTimeout(r, 2000));
@@ -345,7 +346,7 @@ export class App implements AfterViewInit, OnDestroy {
       if (!this.demoRunning) { this.demoRunning = false; return; }
       const now = Date.now();
       for (const city of wave) {
-        accumulated.set(city, { cat: '2', title: 'חדירת כלי טיס עוין', desc: '', timestamp: now });
+        accumulated.set(city, { cat: '2', title: AIRCRAFT_TITLE, desc: '', timestamp: now });
       }
       this.applyState(new Map(accumulated));
       await new Promise((r) => setTimeout(r, 3000));
@@ -385,7 +386,7 @@ export class App implements AfterViewInit, OnDestroy {
     // Phase 2: Rocket alert
     const rocketTime = Date.now();
     for (const city of accumulated.keys()) {
-      accumulated.set(city, { cat: '1', title: 'ירי רקטות וטילים', desc: '', timestamp: rocketTime });
+      accumulated.set(city, { cat: '1', title: ROCKETS_TITLE, desc: '', timestamp: rocketTime });
     }
     this.applyState(new Map(accumulated));
 
@@ -400,7 +401,7 @@ export class App implements AfterViewInit, OnDestroy {
   private async clearCities(cities: Map<string, CityAlert>): Promise<void> {
     const clearMap = new Map<string, CityAlert>();
     for (const [city, alert] of cities) {
-      clearMap.set(city, { ...alert, clearing: true });
+      clearMap.set(city, { ...alert, title: ALL_CLEAR_TITLE, clearing: true });
     }
     this.applyState(clearMap);
     await new Promise((r) => setTimeout(r, 2500));
@@ -497,6 +498,7 @@ export class App implements AfterViewInit, OnDestroy {
     }
 
     const originKey = detectOrigin(cities, coordsMap);
+    if (originKey === 'lebanon') return;
     this.startMissileTrajectory(originKey, startTime, target);
   }
 
@@ -532,7 +534,8 @@ export class App implements AfterViewInit, OnDestroy {
     }).addTo(this.map);
 
     const tick = () => {
-      const traj = this.iranTrajectory!;
+      if (!this.iranTrajectory) return;
+      const traj = this.iranTrajectory;
       const src = ORIGINS[traj.originKey].coords;
       const elapsed = Date.now() - startTime;
       const t = Math.min(elapsed / flightMs, 1);

@@ -65,7 +65,7 @@
         @for (entry of alertHistory(); track entry.id) {
           <div class="history-card" [class]="'hc-cat-' + entry.cat">
             <div class="hc-top">
-              <span class="hc-badge" [class]="'hc-badge-' + entry.cat">{{ categoryLabel(entry.cat) }}</span>
+              <span class="hc-badge" [class]="'hc-badge-' + entry.cat">{{ categoryLabel(entry.title) }}</span>
               <span class="hc-time">{{ formatTime(entry.timestamp) }}</span>
             </div>
             <div class="hc-title">{{ entry.title }}</div>

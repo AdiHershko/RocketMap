@@ -19,15 +19,15 @@ export interface HistoryEntry {
 }
 
 const ALL_CLEAR_TITLE = 'האירוע הסתיים';
-const EARLY_WARNING_TITLE = 'התראה מקדימה';
-const EARLY_WARNING_DESC = 'בדקות הקרובות צפויות להתקבל התראות';
 const CLEAR_DISPLAY_MS = 2500;
 
-// Oref category numbers
-const CAT_EARLY_WARNING = new Set(['5', '14']);  // pre-alert
-const CAT_ALL_CLEAR     = new Set(['10', '13']); // all clear
-const CAT_AIRCRAFT      = new Set(['2']);         // hostile aircraft
-// cat 1 = rockets (default)
+// Derive alert type from title text (cat field is unreliable)
+function typeFromTitle(title: string, desc: string): 'all-clear' | 'early-warning' | 'aircraft' | 'rockets' {
+  if (title.includes('הסתיים')) return 'all-clear';
+  if (title.includes('בדקות הקרובות') || desc?.includes('בדקות הקרובות')) return 'early-warning';
+  if (title.includes('כלי טיס')) return 'aircraft';
+  return 'rockets';
+}
 
 @Injectable({ providedIn: 'root' })
 export class AlertService implements OnDestroy {
@@ -80,8 +80,11 @@ export class AlertService implements OnDestroy {
 
       let changed = false;
 
-      const isAllClear = data.title === ALL_CLEAR_TITLE || CAT_ALL_CLEAR.has(data.cat);
-      const isEarlyWarning = CAT_EARLY_WARNING.has(data.cat) || data.desc?.includes(EARLY_WARNING_DESC);
+      const type = typeFromTitle(data.title, data.desc);
+      const isAllClear    = type === 'all-clear';
+      const isEarlyWarning = type === 'early-warning';
+      const effectiveCat  = isEarlyWarning ? '5' : type === 'aircraft' ? '2' : '1';
+      const effectiveTitle = data.title;
 
       if (isAllClear) {
         for (const city of data.data) {
@@ -93,8 +96,6 @@ export class AlertService implements OnDestroy {
           }
         }
       } else {
-        const effectiveTitle = isEarlyWarning ? EARLY_WARNING_TITLE : data.title;
-        const effectiveCat   = isEarlyWarning ? '5' : data.cat;
         for (const city of data.data) {
           this.state.set(city, {
             cat: effectiveCat,
@@ -115,8 +116,8 @@ export class AlertService implements OnDestroy {
         this.lastAlertId = data.id;
         const entry: HistoryEntry = {
           id: data.id,
-          cat: data.cat,
-          title: isEarlyWarning ? EARLY_WARNING_TITLE : data.title,
+          cat: effectiveCat,
+          title: effectiveTitle,
           cities: data.data,
           timestamp: Date.now(),
         };
