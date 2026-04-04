@@ -11,6 +11,8 @@ export interface CityAlert {
 }
 
 const ALL_CLEAR_TITLE = 'האירוע הסתיים';
+const EARLY_WARNING_TITLE = 'התראה מקדימה';
+const EARLY_WARNING_DESC = 'בדקות הקרובות צפויות להתקבל התראות';
 const CLEAR_DISPLAY_MS = 2500; // how long to show green before removing
 
 @Injectable({ providedIn: 'root' })
@@ -73,10 +75,13 @@ export class AlertService implements OnDestroy {
           }
         }
       } else {
+        const effectiveTitle = data.desc?.includes(EARLY_WARNING_DESC)
+          ? EARLY_WARNING_TITLE
+          : data.title;
         for (const city of data.data) {
           this.state.set(city, {
             cat: data.cat,
-            title: data.title,
+            title: effectiveTitle,
             desc: data.desc,
             timestamp: Date.now(),
           });
