@@ -1,9 +1,10 @@
 module.exports = async function handler(req, res) {
   try {
-    const pathSegments = req.query.path || [];
+    const raw = req.query.path || '';
+    const pathPart = Array.isArray(raw) ? raw.join('/') : raw;
     const { path: _, ...queryParams } = req.query;
     const queryString = new URLSearchParams(queryParams).toString();
-    const targetUrl = `https://www.oref.org.il/${pathSegments.join('/')}${queryString ? '?' + queryString : ''}`;
+    const targetUrl = `https://www.oref.org.il/${pathPart}${queryString ? '?' + queryString : ''}`;
 
     const response = await fetch(targetUrl, {
       headers: {

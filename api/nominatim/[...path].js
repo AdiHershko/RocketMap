@@ -1,8 +1,9 @@
 module.exports = async function handler(req, res) {
-  const pathSegments = req.query.path || [];
+  const raw = req.query.path || '';
+  const pathPart = Array.isArray(raw) ? raw.join('/') : raw;
   const { path: _, ...queryParams } = req.query;
   const queryString = new URLSearchParams(queryParams).toString();
-  const targetUrl = `https://nominatim.openstreetmap.org/${pathSegments.join('/')}${queryString ? '?' + queryString : ''}`;
+  const targetUrl = `https://nominatim.openstreetmap.org/${pathPart}${queryString ? '?' + queryString : ''}`;
 
   const response = await fetch(targetUrl, {
     headers: {
