@@ -1,0 +1,9 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist/rocket-map/browser",
+  "rewrites": [
+    { "source": "/api/oref/(.*)", "destination": "/api/oref/[...path]" },
+    { "source": "/api/nominatim/(.*)", "destination": "/api/nominatim/[...path]" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
