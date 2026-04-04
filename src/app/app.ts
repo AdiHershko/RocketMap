@@ -6,21 +6,24 @@ import { CITY_COORDINATES } from './city-coordinates';
 import { CITY_POLYGONS } from './city-polygons';
 import { Subscription } from 'rxjs';
 
-// Cat numbers from Oref
-const CAT_EARLY_WARNING = '5';
-const CAT_AIRCRAFT      = '2';
-
 const EARLY_WARNING_TITLE = 'בדקות הקרובות צפויות להתקבל התראות באזורכם';
 const ROCKETS_TITLE       = 'ירי רקטות וטילים';
 const AIRCRAFT_TITLE      = 'חדירת כלי טיס עוין';
 const ALL_CLEAR_TITLE     = 'האירוע הסתיים';
 
+function isEarlyWarning(a: CityAlert) { return a.title.includes('בדקות הקרובות'); }
+function isAircraft(a: CityAlert)     { return a.title.includes('כלי טיס'); }
+
 function styleForAlert(alert: CityAlert): L.PathOptions {
   const base = { fillOpacity: 0.4, weight: 2 };
-  if (alert.clearing)                return { ...base, color: '#00aa44', fillColor: '#00cc55' }; // green
-  if (alert.cat === CAT_EARLY_WARNING) return { ...base, color: '#cc6600', fillColor: '#ff8800' }; // orange
-  if (alert.cat === CAT_AIRCRAFT)    return { ...base, color: '#0055ff', fillColor: '#3377ff' }; // blue
-  return                                    { ...base, color: '#cc0000', fillColor: '#ff2200' }; // red
+  if (alert.trace) {
+    const c = isAircraft(alert) ? '#0055ff' : '#cc0000';
+    return { color: c, fillColor: c, fillOpacity: 0.07, weight: 1, opacity: 0.3 };
+  }
+  if (alert.clearing)         return { ...base, color: '#00aa44', fillColor: '#00cc55' };
+  if (isEarlyWarning(alert))  return { ...base, color: '#cc6600', fillColor: '#ff8800' };
+  if (isAircraft(alert))      return { ...base, color: '#0055ff', fillColor: '#3377ff' };
+  return                             { ...base, color: '#cc0000', fillColor: '#ff2200' };
 }
 
 // Origin sources
@@ -67,7 +70,7 @@ function detectOrigin(
   const avgLng = pts.reduce((s, p) => s + p[1], 0) / pts.length;
   const stdLat = Math.sqrt(pts.reduce((s, p) => s + (p[0] - avgLat) ** 2, 0) / pts.length);
 
-  const hasEarlyWarning = [...cities.values()].some((a) => a.cat === CAT_EARLY_WARNING);
+  const hasEarlyWarning = [...cities.values()].some((a) => isEarlyWarning(a));
 
   // Yemen: far south, always comes with early warning
   if (avgLat < 31.0) return 'yemen';
@@ -211,7 +214,7 @@ export class App implements AfterViewInit, OnDestroy {
   }
 
   private map!: L.Map;
-  private cityLayers = new Map<string, { layer: L.Layer; title: string; cat: string }>();
+  private cityLayers = new Map<string, { layer: L.Layer; title: string; cat: string; clearing: boolean; trace: boolean }>();
   private iranTrajectory: IranTrajectory | null = null;
   private aircraftLayers: L.Layer[] = [];
   private alertSub!: Subscription;
@@ -296,7 +299,7 @@ export class App implements AfterViewInit, OnDestroy {
       if (!this.demoRunning) { this.demoRunning = false; return; }
       const now = Date.now();
       for (const city of wave) {
-        accumulated.set(city, { cat: CAT_EARLY_WARNING, title: EARLY_WARNING_TITLE, desc: '', timestamp: now });
+        accumulated.set(city, { cat: '5', title: EARLY_WARNING_TITLE, desc: '', timestamp: now });
       }
       this.applyState(new Map(accumulated));
       await new Promise((r) => setTimeout(r, 2000));
@@ -383,7 +386,7 @@ export class App implements AfterViewInit, OnDestroy {
       if (!this.demoRunning) { this.demoRunning = false; return; }
       const now = Date.now();
       for (const city of wave) {
-        accumulated.set(city, { cat: CAT_EARLY_WARNING, title: EARLY_WARNING_TITLE, desc: '', timestamp: now });
+        accumulated.set(city, { cat: '5', title: EARLY_WARNING_TITLE, desc: '', timestamp: now });
       }
       this.applyState(new Map(accumulated));
       await new Promise((r) => setTimeout(r, 2000));
@@ -444,8 +447,12 @@ export class App implements AfterViewInit, OnDestroy {
   private applyState(cities: Map<string, CityAlert>): void {
     for (const [city, entry] of this.cityLayers) {
       const updated = cities.get(city);
-      // Remove if gone, clearing, or alert type changed (title/cat)
-      if (!updated || updated.clearing || updated.title !== entry.title || updated.cat !== entry.cat) {
+      const stateChanged = !updated
+        || (!!updated.clearing !== entry.clearing)
+        || (!!updated.trace !== entry.trace)
+        || updated.title !== entry.title
+        || updated.cat !== entry.cat;
+      if (stateChanged) {
         entry.layer.remove();
         this.cityLayers.delete(city);
       }
@@ -457,25 +464,38 @@ export class App implements AfterViewInit, OnDestroy {
       const layer = this.buildLayer(city, alert);
       if (layer) {
         layer.addTo(this.map);
-        this.cityLayers.set(city, { layer, title: alert.title, cat: alert.cat });
+        this.cityLayers.set(city, {
+          layer, title: alert.title, cat: alert.cat,
+          clearing: !!alert.clearing, trace: !!alert.trace,
+        });
       }
     }
 
     this.updateTrajectory(cities);
 
-    this.hasAlerts.set(cities.size > 0);
-    this.activeAlerts.set([...cities.entries()].map(([city, alert]) => ({ city, alert })));
+    const realActive = [...cities.values()].filter((a) => !a.clearing && !a.trace);
+    this.hasAlerts.set(realActive.length > 0);
+    this.activeAlerts.set(
+      [...cities.entries()]
+        .filter(([, a]) => !a.trace)
+        .map(([city, alert]) => ({ city, alert }))
+    );
 
-    if (newEntries.length > 0 && this.cityLayers.size > 0) {
-      const group = L.featureGroup([...this.cityLayers.values()].map((e) => e.layer));
-      this.map.fitBounds(group.getBounds().pad(0.3));
+    // Only fit bounds for new non-trace entries
+    const boundsEntries = newEntries.filter(([, a]) => !a.trace);
+    if (boundsEntries.length > 0 && this.cityLayers.size > 0) {
+      const nonTraceLayers = [...this.cityLayers.values()].filter((e) => !e.trace).map((e) => e.layer);
+      if (nonTraceLayers.length > 0) {
+        const group = L.featureGroup(nonTraceLayers);
+        this.map.fitBounds(group.getBounds().pad(0.3));
+      }
     }
   }
 
   private updateTrajectory(cities: Map<string, CityAlert>): void {
     this.updateAircraftTrajectory(cities);
 
-    const activeCities = [...cities.entries()].filter(([, a]) => !a.clearing && a.cat !== CAT_AIRCRAFT);
+    const activeCities = [...cities.entries()].filter(([, a]) => !a.clearing && !a.trace && !isAircraft(a));
     if (activeCities.length === 0) {
       this.clearIranTrajectory();
       return;
@@ -485,7 +505,7 @@ export class App implements AfterViewInit, OnDestroy {
       activeCities.map(([city]) => [city, CITY_COORDINATES[city]]).filter(([, c]) => !!c) as [string, [number, number]][]
     );
 
-    const earlyWarnCities = activeCities.filter(([, a]) => a.cat === CAT_EARLY_WARNING);
+    const earlyWarnCities = activeCities.filter(([, a]) => isEarlyWarning(a));
     const sourceCities = earlyWarnCities.length > 0 ? earlyWarnCities : activeCities;
     const sourceCoords = sourceCities
       .map(([city]) => CITY_COORDINATES[city])
@@ -493,7 +513,7 @@ export class App implements AfterViewInit, OnDestroy {
 
     if (sourceCoords.length === 0) {
       if (this.iranTrajectory) {
-        const hasActive = [...cities.values()].some((a) => !a.clearing);
+        const hasActive = [...cities.values()].some((a) => !a.clearing && !a.trace);
         if (!hasActive) this.clearIranTrajectory();
       }
       return;
@@ -580,7 +600,7 @@ export class App implements AfterViewInit, OnDestroy {
 
     // Collect aircraft-alerted cities sorted by timestamp
     const points = [...cities.entries()]
-      .filter(([, a]) => a.cat === '2' && !a.clearing)
+      .filter(([, a]) => isAircraft(a) && !a.clearing && !a.trace)
       .sort(([, a], [, b]) => a.timestamp - b.timestamp)
       .map(([city]) => CITY_COORDINATES[city])
       .filter((c): c is [number, number] => !!c);

@@ -8,6 +8,7 @@ export interface CityAlert {
   desc: string;
   timestamp: number;
   clearing?: boolean;
+  trace?: boolean;
 }
 
 export interface HistoryEntry {
@@ -19,10 +20,10 @@ export interface HistoryEntry {
 }
 
 const ALL_CLEAR_TITLE = 'האירוע הסתיים';
-const CLEAR_DISPLAY_MS = 2500;
+const CLEAR_DISPLAY_MS  = 60 * 1000;       // 60s green clearing phase
+const TRACE_DISPLAY_MS  = 5 * 60 * 1000;   // 5min faded post-alert trace
 
-// Derive alert type from title text (cat field is unreliable)
-function typeFromTitle(title: string, desc: string): 'all-clear' | 'early-warning' | 'aircraft' | 'rockets' {
+export function typeFromTitle(title: string, desc: string): 'all-clear' | 'early-warning' | 'aircraft' | 'rockets' {
   if (title.includes('הסתיים')) return 'all-clear';
   if (title.includes('בדקות הקרובות') || desc?.includes('בדקות הקרובות')) return 'early-warning';
   if (title.includes('כלי טיס')) return 'aircraft';
@@ -81,22 +82,21 @@ export class AlertService implements OnDestroy {
       let changed = false;
 
       const type = typeFromTitle(data.title, data.desc);
-      const isAllClear    = type === 'all-clear';
+      const isAllClear     = type === 'all-clear';
       const isEarlyWarning = type === 'early-warning';
-      const effectiveCat  = isEarlyWarning ? '5' : type === 'aircraft' ? '2' : '1';
+      const effectiveCat   = isEarlyWarning ? '5' : type === 'aircraft' ? '2' : '1';
       const effectiveTitle = data.title;
 
       if (isAllClear) {
         for (const city of data.data) {
           const existing = this.state.get(city);
-          if (existing && !existing.clearing) {
+          if (existing && !existing.clearing && !existing.trace) {
             this.state.set(city, { ...existing, title: ALL_CLEAR_TITLE, clearing: true });
             changed = true;
-            setTimeout(() => this.removeClearedCity(city), CLEAR_DISPLAY_MS);
+            setTimeout(() => this.transitionToTrace(city), CLEAR_DISPLAY_MS);
           }
         }
       } else {
-        // When rockets arrive, drop any lingering early-warning cities
         if (type === 'rockets') {
           for (const [city, alert] of this.state) {
             if (typeFromTitle(alert.title, alert.desc) === 'early-warning') {
@@ -112,7 +112,7 @@ export class AlertService implements OnDestroy {
             cat: effectiveCat,
             title: effectiveTitle,
             desc: data.desc,
-            timestamp: existing ? existing.timestamp : now, // preserve original time
+            timestamp: existing ? existing.timestamp : now,
           });
           changed = true;
         }
@@ -122,7 +122,6 @@ export class AlertService implements OnDestroy {
         this.activeCities$.next(new Map(this.state));
       }
 
-      // Record to history (deduplicate by alert id)
       if (data.id && data.id !== this.lastAlertId) {
         this.lastAlertId = data.id;
         const entry: HistoryEntry = {
@@ -135,12 +134,20 @@ export class AlertService implements OnDestroy {
         this.history$.next([entry, ...this.history$.value].slice(0, 200));
       }
     } catch {
-      // ignore parse/network errors, preserve state
+      // ignore parse/network errors
     }
   }
 
-  private removeClearedCity(city: string): void {
-    if (this.state.get(city)?.clearing) {
+  private transitionToTrace(city: string): void {
+    const current = this.state.get(city);
+    if (!current?.clearing) return;
+    this.state.set(city, { ...current, clearing: false, trace: true });
+    this.activeCities$.next(new Map(this.state));
+    setTimeout(() => this.removeTraceCity(city), TRACE_DISPLAY_MS);
+  }
+
+  private removeTraceCity(city: string): void {
+    if (this.state.get(city)?.trace) {
       this.state.delete(city);
       this.activeCities$.next(new Map(this.state));
     }
