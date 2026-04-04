@@ -7,7 +7,15 @@ export interface CityAlert {
   title: string;
   desc: string;
   timestamp: number;
-  clearing?: boolean; // true = all-clear received, show green briefly
+  clearing?: boolean;
+}
+
+export interface HistoryEntry {
+  id: string;
+  cat: string;
+  title: string;
+  cities: string[];
+  timestamp: number;
 }
 
 const ALL_CLEAR_TITLE = 'האירוע הסתיים';
@@ -17,7 +25,7 @@ const CLEAR_DISPLAY_MS = 2500;
 
 // Oref category numbers
 const CAT_EARLY_WARNING = new Set(['5', '14']);  // pre-alert
-const CAT_ALL_CLEAR     = new Set(['13']);        // all clear
+const CAT_ALL_CLEAR     = new Set(['10', '13']); // all clear
 const CAT_AIRCRAFT      = new Set(['2']);         // hostile aircraft
 // cat 1 = rockets (default)
 
@@ -25,7 +33,9 @@ const CAT_AIRCRAFT      = new Set(['2']);         // hostile aircraft
 export class AlertService implements OnDestroy {
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private state = new Map<string, CityAlert>();
+  private lastAlertId = '';
   readonly activeCities$ = new BehaviorSubject<Map<string, CityAlert>>(new Map());
+  readonly history$ = new BehaviorSubject<HistoryEntry[]>([]);
 
   startPolling(intervalMs = 3000): void {
     this.fetchAlerts();
@@ -98,6 +108,19 @@ export class AlertService implements OnDestroy {
 
       if (changed) {
         this.activeCities$.next(new Map(this.state));
+      }
+
+      // Record to history (deduplicate by alert id)
+      if (data.id && data.id !== this.lastAlertId) {
+        this.lastAlertId = data.id;
+        const entry: HistoryEntry = {
+          id: data.id,
+          cat: data.cat,
+          title: isEarlyWarning ? EARLY_WARNING_TITLE : data.title,
+          cities: data.data,
+          timestamp: Date.now(),
+        };
+        this.history$.next([entry, ...this.history$.value].slice(0, 200));
       }
     } catch {
       // ignore parse/network errors, preserve state

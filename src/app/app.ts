@@ -1,8 +1,7 @@
 import { Component, OnDestroy, AfterViewInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import * as L from 'leaflet';
-import { AlertService, CityAlert } from './alert.service';
-import { CityPolygonService } from './city-polygon.service';
+import { AlertService, CityAlert, HistoryEntry } from './alert.service';
 import { CITY_COORDINATES } from './city-coordinates';
 import { Subscription } from 'rxjs';
 
@@ -54,9 +53,6 @@ function detectOrigin(
   cities: Map<string, CityAlert>,
   coords: Map<string, [number, number]>,
 ): string {
-  const hasEarlyWarning = [...cities.values()].some((a) => a.cat === CAT_EARLY_WARNING);
-  if (hasEarlyWarning) return 'iran';
-
   const pts = [...cities.keys()]
     .map((c) => coords.get(c))
     .filter((c): c is [number, number] => !!c);
@@ -67,8 +63,13 @@ function detectOrigin(
   const avgLng = pts.reduce((s, p) => s + p[1], 0) / pts.length;
   const stdLat = Math.sqrt(pts.reduce((s, p) => s + (p[0] - avgLat) ** 2, 0) / pts.length);
 
+  const hasEarlyWarning = [...cities.values()].some((a) => a.cat === CAT_EARLY_WARNING);
+
+  // Yemen: far south, always comes with early warning
+  if (avgLat < 31.0) return 'yemen';
+  // Iran: early warning + central/wide spread
+  if (hasEarlyWarning) return 'iran';
   if (pts.length >= 10 && stdLat > 0.6) return 'iran';
-  if (avgLat < 30.5) return 'yemen';
   if (avgLat < 31.5) return 'gaza';
   if (avgLat > 32.8 && avgLng > 35.8) return 'syria';
   if (avgLat > 32.8) return 'lebanon';
@@ -181,9 +182,27 @@ export class App implements AfterViewInit, OnDestroy {
   protected readonly hasAlerts = signal(false);
   protected readonly isDemoActive = signal(false);
   protected readonly sidebarCollapsed = signal(window.innerWidth < 768);
+  protected readonly activeTab = signal<'live' | 'history'>('live');
+  protected readonly alertHistory = signal<HistoryEntry[]>([]);
 
   protected toggleSidebar(): void {
     this.sidebarCollapsed.set(!this.sidebarCollapsed());
+  }
+
+  private historySub!: Subscription;
+
+  protected categoryLabel(cat: string): string {
+    switch (cat) {
+      case '1': return 'Rockets';
+      case '2': return 'Aircraft';
+      case '5': case '14': return 'Early Warning';
+      case '10': case '13': return 'All Clear';
+      default: return 'Alert';
+    }
+  }
+
+  protected formatTime(ts: number): string {
+    return new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
   private map!: L.Map;
@@ -215,11 +234,17 @@ export class App implements AfterViewInit, OnDestroy {
     ['עכו', 'קריית ביאליק', 'חיפה'],
   ];
 
+  // Yemen/Houthi: long-range ballistic, far south (Eilat/Negev), always has early warning
+  private static readonly YEMEN_WAVES: string[][] = [
+    ['אילת', 'מצפה רמון'],
+    ['ירוחם', 'דימונה'],
+    ['ערד', 'באר שבע'],
+  ];
+
   protected demoRunning = false;
 
   constructor(
     private alertService: AlertService,
-    private cityPolygonService: CityPolygonService,
   ) {}
 
   ngAfterViewInit(): void {
@@ -228,11 +253,13 @@ export class App implements AfterViewInit, OnDestroy {
       this.applyState(cities),
     );
     this.alertService.startPolling(3000);
+    this.historySub = this.alertService.history$.subscribe((h) => this.alertHistory.set(h));
   }
 
   ngOnDestroy(): void {
     this.alertService.stopPolling();
     this.alertSub?.unsubscribe();
+    this.historySub?.unsubscribe();
     this.clearIranTrajectory();
     this.clearAircraftTrajectory();
   }
@@ -240,6 +267,7 @@ export class App implements AfterViewInit, OnDestroy {
   protected startLebanonRocketsDemo(): void { this.runLebanonDemo(); }
   protected startIranRocketsDemo(): void { this.runIranDemo(); }
   protected startAircraftDemo(): void { this.runAircraftDemo(); }
+  protected startYemenDemo(): void { this.runYemenDemo(); }
 
   private async runIranDemo(): Promise<void> {
     if (this.demoRunning) return;
@@ -256,7 +284,7 @@ export class App implements AfterViewInit, OnDestroy {
       for (const city of wave) {
         accumulated.set(city, { cat: CAT_EARLY_WARNING, title: EARLY_WARNING_TITLE, desc: '', timestamp: now });
       }
-      await this.applyState(new Map(accumulated));
+      this.applyState(new Map(accumulated));
       await new Promise((r) => setTimeout(r, 2000));
     }
 
@@ -271,7 +299,7 @@ export class App implements AfterViewInit, OnDestroy {
     for (const city of accumulated.keys()) {
       accumulated.set(city, { cat: '1', title: 'ירי רקטות וטילים', desc: '', timestamp: rocketTime });
     }
-    await this.applyState(new Map(accumulated));
+    this.applyState(new Map(accumulated));
 
     // Wait 40s then clear (missile arrives at 60s from start)
     await new Promise((r) => setTimeout(r, 40000));
@@ -295,7 +323,7 @@ export class App implements AfterViewInit, OnDestroy {
       for (const city of wave) {
         accumulated.set(city, { cat: '1', title: 'ירי רקטות וטילים', desc: '', timestamp: now });
       }
-      await this.applyState(new Map(accumulated));
+      this.applyState(new Map(accumulated));
       await new Promise((r) => setTimeout(r, 2000));
     }
 
@@ -318,7 +346,7 @@ export class App implements AfterViewInit, OnDestroy {
       for (const city of wave) {
         accumulated.set(city, { cat: '2', title: 'חדירת כלי טיס עוין', desc: '', timestamp: now });
       }
-      await this.applyState(new Map(accumulated));
+      this.applyState(new Map(accumulated));
       await new Promise((r) => setTimeout(r, 3000));
     }
 
@@ -328,14 +356,54 @@ export class App implements AfterViewInit, OnDestroy {
     this.demoRunning = false;
   }
 
+  private async runYemenDemo(): Promise<void> {
+    if (this.demoRunning) return;
+    this.demoRunning = true;
+    this.isDemoActive.set(true);
+    const accumulated = new Map<string, CityAlert>();
+
+    const demoStart = Date.now();
+
+    // Phase 1: Early warning waves south→north
+    for (const wave of App.YEMEN_WAVES) {
+      if (!this.demoRunning) { this.demoRunning = false; return; }
+      const now = Date.now();
+      for (const city of wave) {
+        accumulated.set(city, { cat: CAT_EARLY_WARNING, title: EARLY_WARNING_TITLE, desc: '', timestamp: now });
+      }
+      this.applyState(new Map(accumulated));
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+
+    if (!this.demoRunning) { this.demoRunning = false; return; }
+
+    // Wait until 20s then upgrade to rocket alert
+    await new Promise((r) => setTimeout(r, Math.max(0, 20000 - (Date.now() - demoStart))));
+    if (!this.demoRunning) { this.demoRunning = false; return; }
+
+    // Phase 2: Rocket alert
+    const rocketTime = Date.now();
+    for (const city of accumulated.keys()) {
+      accumulated.set(city, { cat: '1', title: 'ירי רקטות וטילים', desc: '', timestamp: rocketTime });
+    }
+    this.applyState(new Map(accumulated));
+
+    await new Promise((r) => setTimeout(r, 40000));
+    if (!this.demoRunning) { this.demoRunning = false; return; }
+
+    // Phase 3: Clear
+    await this.clearCities(accumulated);
+    this.demoRunning = false;
+  }
+
   private async clearCities(cities: Map<string, CityAlert>): Promise<void> {
     const clearMap = new Map<string, CityAlert>();
     for (const [city, alert] of cities) {
       clearMap.set(city, { ...alert, clearing: true });
     }
-    await this.applyState(clearMap);
+    this.applyState(clearMap);
     await new Promise((r) => setTimeout(r, 2500));
-    await this.applyState(new Map());
+    this.applyState(new Map());
   }
 
   protected clearDemo(): void {
@@ -348,9 +416,10 @@ export class App implements AfterViewInit, OnDestroy {
   private initMap(): void {
     this.map = L.map('map', { center: [31.5, 34.8], zoom: 8 });
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 18,
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a> © <a href="https://carto.com/">CARTO</a>',
+      maxZoom: 19,
+      subdomains: 'abcd',
     }).addTo(this.map);
 
     this.map.createPane('trajectoryPane');
@@ -358,7 +427,7 @@ export class App implements AfterViewInit, OnDestroy {
     this.map.getPane('trajectoryPane')!.style.pointerEvents = 'none';
   }
 
-  private async applyState(cities: Map<string, CityAlert>): Promise<void> {
+  private applyState(cities: Map<string, CityAlert>): void {
     for (const [city, entry] of this.cityLayers) {
       const updated = cities.get(city);
       // Remove if gone, clearing, or alert type changed (title/cat)
@@ -370,15 +439,13 @@ export class App implements AfterViewInit, OnDestroy {
 
     const newEntries = [...cities.entries()].filter(([city]) => !this.cityLayers.has(city));
 
-    await Promise.all(
-      newEntries.map(async ([city, alert]) => {
-        const layer = await this.buildLayer(city, alert);
-        if (layer) {
-          layer.addTo(this.map);
-          this.cityLayers.set(city, { layer, title: alert.title, cat: alert.cat });
-        }
-      }),
-    );
+    for (const [city, alert] of newEntries) {
+      const layer = this.buildLayer(city, alert);
+      if (layer) {
+        layer.addTo(this.map);
+        this.cityLayers.set(city, { layer, title: alert.title, cat: alert.cat });
+      }
+    }
 
     this.updateTrajectory(cities);
 
@@ -541,20 +608,21 @@ export class App implements AfterViewInit, OnDestroy {
     this.aircraftLayers = [];
   }
 
-  private async buildLayer(city: string, alert: CityAlert): Promise<L.Layer | null> {
+  private buildLayer(city: string, alert: CityAlert): L.Layer | null {
+    const coords = CITY_COORDINATES[city];
+    if (!coords) return null;
+
     const style = styleForAlert(alert);
     const popup = `<b>${city}</b><br>${alert.title}`;
 
-    const feature = await this.cityPolygonService.fetchPolygon(city);
-    if (feature) {
-      return L.geoJSON(feature, { style: () => style }).bindPopup(popup);
-    }
+    const marker = L.circleMarker(coords, {
+      ...style,
+      radius: 10,
+    }).bindPopup(popup);
 
-    const coords = CITY_COORDINATES[city];
-    if (coords) {
-      return L.circle(coords, { ...style, radius: 5000 }).bindPopup(popup);
-    }
+    marker.on('mouseover', () => marker.setStyle({ fillOpacity: 0.7, weight: 3 }));
+    marker.on('mouseout', () => marker.setStyle({ fillOpacity: style.fillOpacity!, weight: style.weight! }));
 
-    return null;
+    return marker;
   }
 }

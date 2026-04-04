@@ -5,54 +5,75 @@
     </button>
     <div class="sidebar-content">
     <div class="sidebar-header">
-      <h1>🚀 RocketMap</h1>
+      <h1>RocketMap</h1>
       <p class="subtitle">Israel Missile Alert Monitor</p>
     </div>
 
-    <div class="status-panel" [class.active]="hasAlerts()">
-      @if (hasAlerts()) {
-        <div class="alert-badge">⚠ ACTIVE ALERT</div>
-        <ul class="city-list">
-          @for (entry of activeAlerts(); track entry.city) {
-            <li [class.aircraft]="entry.alert.cat === '2'">
-              <span class="city-dot" [class.aircraft]="entry.alert.cat === '2'"></span>
-              {{ entry.city }}
-            </li>
-          }
-        </ul>
-      } @else {
-        <div class="no-alert-badge">✓ No Active Alerts</div>
-        <p class="quiet-msg">Monitoring for alerts...</p>
-      }
+    <div class="sidebar-tabs">
+      <button class="tab-btn" [class.active]="activeTab() === 'live'" (click)="activeTab.set('live')">Live</button>
+      <button class="tab-btn" [class.active]="activeTab() === 'history'" (click)="activeTab.set('history')">History</button>
     </div>
 
-    <div class="legend">
-      <h3>Legend</h3>
-      <div class="legend-item">
-        <span class="legend-dot alert-dot"></span> Rocket / missile
-      </div>
-      <div class="legend-item">
-        <span class="legend-dot aircraft-dot"></span> Hostile aircraft
-      </div>
-    </div>
-
-    <div class="demo-panel">
-      <h3>Demo</h3>
-      <div class="demo-buttons">
-        <button class="btn-demo" (click)="startLebanonRocketsDemo()" [disabled]="demoRunning">
-          🚀 Rockets — Lebanon
-        </button>
-        <button class="btn-demo" (click)="startIranRocketsDemo()" [disabled]="demoRunning">
-          🚀 Rockets — Iran
-        </button>
-        <button class="btn-demo" (click)="startAircraftDemo()" [disabled]="demoRunning">
-          ✈ Aircraft — Lebanon
-        </button>
-        @if (isDemoActive()) {
-          <button class="btn-clear" (click)="clearDemo()">Clear</button>
+    @if (activeTab() === 'live') {
+      <div class="status-panel" [class.active]="hasAlerts()">
+        @if (hasAlerts()) {
+          <div class="alert-badge">ACTIVE ALERT</div>
+          <ul class="city-list">
+            @for (entry of activeAlerts(); track entry.city) {
+              <li [class.aircraft]="entry.alert.cat === '2'"
+                  [class.early]="entry.alert.cat === '5'">
+                <span class="city-dot"
+                  [class.aircraft]="entry.alert.cat === '2'"
+                  [class.early]="entry.alert.cat === '5'"></span>
+                {{ entry.city }}
+              </li>
+            }
+          </ul>
+        } @else {
+          <div class="no-alert-badge">No Active Alerts</div>
+          <p class="quiet-msg">Monitoring for alerts...</p>
         }
       </div>
-    </div>
+
+      <div class="legend">
+        <h3>Legend</h3>
+        <div class="legend-item"><span class="legend-dot alert-dot"></span> Rocket / missile</div>
+        <div class="legend-item"><span class="legend-dot aircraft-dot"></span> Hostile aircraft</div>
+        <div class="legend-item"><span class="legend-dot early-dot"></span> Early warning</div>
+        <div class="legend-item"><span class="legend-dot clear-dot"></span> All clear</div>
+      </div>
+
+      <div class="demo-panel">
+        <h3>Demo</h3>
+        <div class="demo-buttons">
+          <button class="btn-demo" (click)="startLebanonRocketsDemo()" [disabled]="demoRunning">Rockets — Lebanon</button>
+          <button class="btn-demo" (click)="startIranRocketsDemo()" [disabled]="demoRunning">Rockets — Iran</button>
+          <button class="btn-demo" (click)="startAircraftDemo()" [disabled]="demoRunning">Aircraft — Lebanon</button>
+        <button class="btn-demo" (click)="startYemenDemo()" [disabled]="demoRunning">Rockets — Yemen</button>
+          @if (isDemoActive()) {
+            <button class="btn-clear" (click)="clearDemo()">Clear</button>
+          }
+        </div>
+      </div>
+    }
+
+    @if (activeTab() === 'history') {
+      <div class="history-panel">
+        @if (alertHistory().length === 0) {
+          <div class="history-empty">No alerts recorded yet</div>
+        }
+        @for (entry of alertHistory(); track entry.id) {
+          <div class="history-card" [class]="'hc-cat-' + entry.cat">
+            <div class="hc-top">
+              <span class="hc-badge" [class]="'hc-badge-' + entry.cat">{{ categoryLabel(entry.cat) }}</span>
+              <span class="hc-time">{{ formatTime(entry.timestamp) }}</span>
+            </div>
+            <div class="hc-title">{{ entry.title }}</div>
+            <div class="hc-cities">{{ entry.cities.join(', ') }}</div>
+          </div>
+        }
+      </div>
+    }
 
     <div class="data-source">
       <p>Data: <a href="https://www.oref.org.il" target="_blank">Pikud HaOref</a></p>
