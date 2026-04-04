@@ -1,4 +1,4 @@
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   const pathSegments = req.query.path || [];
   const { path: _, ...queryParams } = req.query;
   const queryString = new URLSearchParams(queryParams).toString();
@@ -16,4 +16,4 @@ export default async function handler(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'public, max-age=86400');
   res.status(response.status).send(body);
-}
+};
