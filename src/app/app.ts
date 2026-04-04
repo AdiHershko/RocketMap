@@ -17,7 +17,7 @@ function isAircraft(a: CityAlert)     { return a.title.includes('כלי טיס')
 function styleForAlert(alert: CityAlert): L.PathOptions {
   const base = { fillOpacity: 0.4, weight: 2 };
   if (alert.trace) {
-    const c = isAircraft(alert) ? '#0055ff' : '#cc0000';
+    const c = isAircraft(alert) ? '#0055ff' : alert.title.includes('הסתיים') ? '#00aa44' : '#cc0000';
     return { color: c, fillColor: c, fillOpacity: 0.07, weight: 1, opacity: 0.3 };
   }
   if (alert.clearing)         return { ...base, color: '#00aa44', fillColor: '#00cc55' };
