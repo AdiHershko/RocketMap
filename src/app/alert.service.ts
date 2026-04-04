@@ -23,6 +23,20 @@ const ALL_CLEAR_TITLE = 'האירוע הסתיים';
 const CLEAR_DISPLAY_MS  = 60 * 1000;       // 60s green clearing phase
 const TRACE_DISPLAY_MS  = 5 * 60 * 1000;   // 5min faded post-alert trace
 
+/**
+ * Oref alert IDs are Windows FILETIME values (100-nanosecond ticks since 1601-01-01).
+ * Convert to Unix ms so we know when the alert was actually created on the server.
+ */
+function alertIdToMs(id: string): number | null {
+  const filetime = parseInt(id, 10);
+  if (!filetime) return null;
+  const unixMs = filetime / 10000 - 11644473600000;
+  const now = Date.now();
+  // Sanity: must be within the last 30 minutes and not in the future
+  if (unixMs < now - 30 * 60 * 1000 || unixMs > now + 5000) return null;
+  return unixMs;
+}
+
 export function typeFromTitle(title: string, desc: string): 'all-clear' | 'early-warning' | 'aircraft' | 'rockets' {
   if (title.includes('הסתיים')) return 'all-clear';
   if (title.includes('בדקות הקרובות') || desc?.includes('בדקות הקרובות')) return 'early-warning';
@@ -105,14 +119,14 @@ export class AlertService implements OnDestroy {
             }
           }
         }
-        const now = Date.now();
+        const alertStart = alertIdToMs(data.id) ?? Date.now();
         for (const city of data.data) {
           const existing = this.state.get(city);
           this.state.set(city, {
             cat: effectiveCat,
             title: effectiveTitle,
             desc: data.desc,
-            timestamp: existing ? existing.timestamp : now,
+            timestamp: existing ? existing.timestamp : alertStart,
           });
           changed = true;
         }

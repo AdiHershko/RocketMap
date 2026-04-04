@@ -90,45 +90,36 @@ function centroid(coords: [number, number][]): [number, number] {
   return [lat, lng];
 }
 
-// Convert lat/lng (degrees) to a unit Cartesian vector
-function toCartesian(lat: number, lng: number): [number, number, number] {
-  const φ = (lat * Math.PI) / 180;
-  const λ = (lng * Math.PI) / 180;
-  return [Math.cos(φ) * Math.cos(λ), Math.cos(φ) * Math.sin(λ), Math.sin(φ)];
+// Bow factor: how much the arc deviates from the straight line (fraction of distance)
+const BOW_FACTOR = 0.2;
+
+// Control point for the ballistic arc — midpoint pushed northward to simulate altitude
+function ballisticControl(from: [number, number], to: [number, number]): [number, number] {
+  const midLat = (from[0] + to[0]) / 2;
+  const midLng = (from[1] + to[1]) / 2;
+  const dist = Math.sqrt((to[0] - from[0]) ** 2 + (to[1] - from[1]) ** 2);
+  return [midLat + dist * BOW_FACTOR, midLng];
 }
 
-// Convert a unit Cartesian vector back to [lat, lng] degrees
-function fromCartesian(v: [number, number, number]): [number, number] {
-  return [
-    (Math.asin(Math.max(-1, Math.min(1, v[2]))) * 180) / Math.PI,
-    (Math.atan2(v[1], v[0]) * 180) / Math.PI,
-  ];
+// Position along the ballistic arc at fraction t (quadratic Bézier)
+function ballisticPoint(from: [number, number], to: [number, number], t: number): [number, number] {
+  const [cLat, cLng] = ballisticControl(from, to);
+  const lat = (1 - t) ** 2 * from[0] + 2 * (1 - t) * t * cLat + t ** 2 * to[0];
+  const lng = (1 - t) ** 2 * from[1] + 2 * (1 - t) * t * cLng + t ** 2 * to[1];
+  return [lat, lng];
 }
 
-// Spherical Linear Interpolation — single point at fraction t along great circle
-function slerp(
-  from: [number, number],
-  to: [number, number],
-  t: number,
-): [number, number] {
-  const a = toCartesian(from[0], from[1]);
-  const b = toCartesian(to[0], to[1]);
-  const dot = Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]));
-  const omega = Math.acos(dot);
-  if (omega < 1e-10) return from;
-  const sinOmega = Math.sin(omega);
-  const f1 = Math.sin((1 - t) * omega) / sinOmega;
-  const f2 = Math.sin(t * omega) / sinOmega;
-  return fromCartesian([f1 * a[0] + f2 * b[0], f1 * a[1] + f2 * b[1], f1 * a[2] + f2 * b[2]]);
+// Tangent bearing of the Bézier arc at fraction t (derivative of quadratic Bézier)
+function ballisticBearing(from: [number, number], to: [number, number], t: number): number {
+  const [cLat, cLng] = ballisticControl(from, to);
+  const dLat = 2 * (1 - t) * (cLat - from[0]) + 2 * t * (to[0] - cLat);
+  const dLng = 2 * (1 - t) * (cLng - from[1]) + 2 * t * (to[1] - cLng);
+  return (Math.atan2(dLng, dLat) * 180) / Math.PI;
 }
 
-// Sample the great circle into numPoints segments for the polyline
-function greatCirclePath(
-  from: [number, number],
-  to: [number, number],
-  numPoints = 120,
-): [number, number][] {
-  return Array.from({ length: numPoints + 1 }, (_, i) => slerp(from, to, i / numPoints));
+// Sample the arc into numPoints segments for the polyline
+function ballisticPath(from: [number, number], to: [number, number], numPoints = 120): [number, number][] {
+  return Array.from({ length: numPoints + 1 }, (_, i) => ballisticPoint(from, to, i / numPoints));
 }
 
 function bearing(from: [number, number], to: [number, number]): number {
@@ -525,7 +516,7 @@ export class App implements AfterViewInit, OnDestroy {
     // If trajectory already running, keep existing origin (don't re-detect on early warning → rocket transition)
     if (this.iranTrajectory) {
       this.iranTrajectory.target = target;
-      this.iranTrajectory.line.setLatLngs(greatCirclePath(ORIGINS[this.iranTrajectory.originKey].coords, target));
+      this.iranTrajectory.line.setLatLngs(ballisticPath(ORIGINS[this.iranTrajectory.originKey].coords, target));
       return;
     }
 
@@ -537,9 +528,9 @@ export class App implements AfterViewInit, OnDestroy {
   private startMissileTrajectory(originKey: string, startTime: number, target: [number, number]): void {
     const origin = ORIGINS[originKey];
     const flightMs = this.isDemoActive() ? origin.flightMsDemo : origin.flightMsReal;
-    const angle = bearing(origin.coords, target);
+    const angle = ballisticBearing(origin.coords, target, 0);
 
-    const line = L.polyline(greatCirclePath(origin.coords, target), {
+    const line = L.polyline(ballisticPath(origin.coords, target), {
       color: origin.color,
       weight: 3,
       dashArray: '10 7',
@@ -558,7 +549,7 @@ export class App implements AfterViewInit, OnDestroy {
     });
     const originLabel = L.marker(origin.coords, { icon: originIcon, interactive: false }).addTo(this.map);
 
-    const initialPos = slerp(origin.coords, target, 0);
+    const initialPos = ballisticPoint(origin.coords, target, 0);
     const missileMarker = L.marker(initialPos, {
       icon: missileIcon(angle, Math.ceil(flightMs / 1000)),
       interactive: false,
@@ -571,10 +562,10 @@ export class App implements AfterViewInit, OnDestroy {
       const src = ORIGINS[traj.originKey].coords;
       const elapsed = Date.now() - startTime;
       const t = Math.min(elapsed / flightMs, 1);
-      const pos = slerp(src, traj.target, t);
+      const pos = ballisticPoint(src, traj.target, t);
       const secondsLeft = Math.max(0, Math.ceil((flightMs - elapsed) / 1000));
       missileMarker.setLatLng(pos);
-      missileMarker.setIcon(missileIcon(bearing(src, traj.target), secondsLeft));
+      missileMarker.setIcon(missileIcon(ballisticBearing(src, traj.target, t), secondsLeft));
       if (t >= 1) this.clearIranTrajectory();
     };
 
