@@ -6,18 +6,75 @@ import { CityPolygonService } from './city-polygon.service';
 import { CITY_COORDINATES } from './city-coordinates';
 import { Subscription } from 'rxjs';
 
+// Cat numbers from Oref
+const CAT_EARLY_WARNING = '5';
+const CAT_AIRCRAFT      = '2';
+
+const EARLY_WARNING_TITLE = 'התראה מקדימה';
+
 function styleForAlert(alert: CityAlert): L.PathOptions {
   const base = { fillOpacity: 0.4, weight: 2 };
-  if (alert.clearing)                        return { ...base, color: '#00aa44', fillColor: '#00cc55' }; // green
-  if (alert.title === EARLY_WARNING_TITLE)   return { ...base, color: '#cc6600', fillColor: '#ff8800' }; // orange
-  if (alert.cat === '2')                     return { ...base, color: '#0055ff', fillColor: '#3377ff' }; // blue
-  return                                            { ...base, color: '#cc0000', fillColor: '#ff2200' }; // red
+  if (alert.clearing)                return { ...base, color: '#00aa44', fillColor: '#00cc55' }; // green
+  if (alert.cat === CAT_EARLY_WARNING) return { ...base, color: '#cc6600', fillColor: '#ff8800' }; // orange
+  if (alert.cat === CAT_AIRCRAFT)    return { ...base, color: '#0055ff', fillColor: '#3377ff' }; // blue
+  return                                    { ...base, color: '#cc0000', fillColor: '#ff2200' }; // red
 }
 
-const SOURCE_IRAN: [number, number] = [32.4, 53.7]; // central Iran
-const flightMs_DEMO = 60 * 1000;             // 1 minute for demo
-const flightMs_REAL = 6.5 * 60 * 1000;      // 6.5 minutes for real alerts
-const EARLY_WARNING_TITLE = 'התראה מקדימה';
+// Origin sources
+interface Origin {
+  label: string;
+  flag: string;
+  coords: [number, number];
+  color: string;
+  flightMsDemo: number;
+  flightMsReal: number;
+}
+
+const ORIGINS: Record<string, Origin> = {
+  iran:    { label: 'Iran',    flag: '🇮🇷', coords: [32.4, 53.7],  color: '#ff4400', flightMsDemo: 60000,  flightMsReal: 6.5 * 60000 },
+  lebanon: { label: 'Lebanon', flag: '🇱🇧', coords: [33.8, 35.6],  color: '#ff4400', flightMsDemo: 15000,  flightMsReal: 1.5 * 60000 },
+  gaza:    { label: 'Gaza',    flag: '🟢',  coords: [31.4, 34.3],  color: '#ff4400', flightMsDemo: 12000,  flightMsReal: 60000        },
+  syria:   { label: 'Syria',   flag: '🇸🇾', coords: [33.5, 36.8],  color: '#ff4400', flightMsDemo: 15000,  flightMsReal: 1.5 * 60000 },
+  yemen:   { label: 'Yemen',   flag: '🇾🇪', coords: [15.5, 44.0],  color: '#ff4400', flightMsDemo: 60000,  flightMsReal: 8 * 60000    },
+  westbank:{ label: 'West Bank',flag: '⚫', coords: [31.9, 35.2],  color: '#ff4400', flightMsDemo: 10000,  flightMsReal: 45000        },
+};
+
+/**
+ * Detect origin from the set of alerted city coordinates.
+ * - Early warning (cat 5) → Iran (only Iran sends pre-alerts)
+ * - Wide spread (stddev lat > 0.6°) + many cities → Iran
+ * - North (centroid lat > 32.8°) + west of 35.8° → Lebanon
+ * - North + east of 35.8° → Syria/Golan
+ * - South (centroid lat < 31.5°) → Gaza
+ * - Far south (centroid lat < 30.5°) → Yemen
+ * - Central-east (lng > 35.0°) → West Bank
+ * - Default → Lebanon
+ */
+function detectOrigin(
+  cities: Map<string, CityAlert>,
+  coords: Map<string, [number, number]>,
+): string {
+  const hasEarlyWarning = [...cities.values()].some((a) => a.cat === CAT_EARLY_WARNING);
+  if (hasEarlyWarning) return 'iran';
+
+  const pts = [...cities.keys()]
+    .map((c) => coords.get(c))
+    .filter((c): c is [number, number] => !!c);
+
+  if (pts.length === 0) return 'lebanon';
+
+  const avgLat = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+  const avgLng = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+  const stdLat = Math.sqrt(pts.reduce((s, p) => s + (p[0] - avgLat) ** 2, 0) / pts.length);
+
+  if (pts.length >= 10 && stdLat > 0.6) return 'iran';
+  if (avgLat < 30.5) return 'yemen';
+  if (avgLat < 31.5) return 'gaza';
+  if (avgLat > 32.8 && avgLng > 35.8) return 'syria';
+  if (avgLat > 32.8) return 'lebanon';
+  if (avgLng > 35.0 && avgLat < 32.5) return 'westbank';
+  return 'lebanon';
+}
 
 function centroid(coords: [number, number][]): [number, number] {
   const lat = coords.reduce((s, c) => s + c[0], 0) / coords.length;
@@ -105,6 +162,7 @@ function missileIcon(angle: number, secondsLeft: number): L.DivIcon {
 
 interface IranTrajectory {
   startTime: number;
+  originKey: string;
   target: [number, number];
   line: L.Polyline;
   originLabel: L.Marker;
@@ -196,7 +254,7 @@ export class App implements AfterViewInit, OnDestroy {
       if (!this.demoRunning) { this.demoRunning = false; return; }
       const now = Date.now();
       for (const city of wave) {
-        accumulated.set(city, { cat: '1', title: EARLY_WARNING_TITLE, desc: '', timestamp: now });
+        accumulated.set(city, { cat: CAT_EARLY_WARNING, title: EARLY_WARNING_TITLE, desc: '', timestamp: now });
       }
       await this.applyState(new Map(accumulated));
       await new Promise((r) => setTimeout(r, 2000));
@@ -336,70 +394,69 @@ export class App implements AfterViewInit, OnDestroy {
   private updateTrajectory(cities: Map<string, CityAlert>): void {
     this.updateAircraftTrajectory(cities);
 
-    const earlyWarnCoords = [...cities.entries()]
-      .filter(([, a]) => a.title === EARLY_WARNING_TITLE)
-      .map(([city]) => CITY_COORDINATES[city])
-      .filter((c): c is [number, number] => !!c);
-
-    if (earlyWarnCoords.length > 0) {
-      const target = centroid(earlyWarnCoords);
-      const startTime = Math.min(
-        ...[...cities.values()]
-          .filter((a) => a.title === EARLY_WARNING_TITLE)
-          .map((a) => a.timestamp),
-      );
-
-      if (this.iranTrajectory) {
-        if (this.iranTrajectory.startTime === startTime) {
-          this.iranTrajectory.target = target;
-          this.iranTrajectory.line.setLatLngs(greatCirclePath(SOURCE_IRAN, target));
-          return;
-        }
-        this.clearIranTrajectory();
-      }
-
-      this.startIranTrajectory(startTime, target);
+    const activeCities = [...cities.entries()].filter(([, a]) => !a.clearing && a.cat !== CAT_AIRCRAFT);
+    if (activeCities.length === 0) {
+      this.clearIranTrajectory();
       return;
     }
 
-    // No early warning — keep trajectory alive while cities are still active (rocket phase),
-    // clear only when all cities are gone or clearing
-    if (this.iranTrajectory) {
-      const hasActiveCities = [...cities.values()].some((a) => !a.clearing);
-      if (!hasActiveCities) this.clearIranTrajectory();
+    const coordsMap = new Map(
+      activeCities.map(([city]) => [city, CITY_COORDINATES[city]]).filter(([, c]) => !!c) as [string, [number, number]][]
+    );
+
+    const earlyWarnCities = activeCities.filter(([, a]) => a.cat === CAT_EARLY_WARNING);
+    const sourceCities = earlyWarnCities.length > 0 ? earlyWarnCities : activeCities;
+    const sourceCoords = sourceCities
+      .map(([city]) => CITY_COORDINATES[city])
+      .filter((c): c is [number, number] => !!c);
+
+    if (sourceCoords.length === 0) {
+      if (this.iranTrajectory) {
+        const hasActive = [...cities.values()].some((a) => !a.clearing);
+        if (!hasActive) this.clearIranTrajectory();
+      }
+      return;
     }
+
+    const target = centroid(sourceCoords);
+    const startTime = Math.min(...sourceCities.map(([, a]) => a.timestamp));
+
+    // If trajectory already running, keep existing origin (don't re-detect on early warning → rocket transition)
+    if (this.iranTrajectory) {
+      this.iranTrajectory.target = target;
+      this.iranTrajectory.line.setLatLngs(greatCirclePath(ORIGINS[this.iranTrajectory.originKey].coords, target));
+      return;
+    }
+
+    const originKey = detectOrigin(cities, coordsMap);
+    this.startMissileTrajectory(originKey, startTime, target);
   }
 
-  private startIranTrajectory(startTime: number, target: [number, number]): void {
-    const flightMs = this.isDemoActive() ? flightMs_DEMO : flightMs_REAL;
-    const angle = bearing(SOURCE_IRAN, target);
+  private startMissileTrajectory(originKey: string, startTime: number, target: [number, number]): void {
+    const origin = ORIGINS[originKey];
+    const flightMs = this.isDemoActive() ? origin.flightMsDemo : origin.flightMsReal;
+    const angle = bearing(origin.coords, target);
 
-    // Static dashed line from Iran to target
-    const line = L.polyline(greatCirclePath(SOURCE_IRAN, target), {
-      color: '#ff4400',
+    const line = L.polyline(greatCirclePath(origin.coords, target), {
+      color: origin.color,
       weight: 3,
       dashArray: '10 7',
       opacity: 0.55,
       pane: 'trajectoryPane',
     }).addTo(this.map);
 
-    // "Iran" label at origin
     const originIcon = L.divIcon({
       className: '',
       html: `<div style="
-        background:#ff4400;color:#fff;font-size:10px;font-weight:bold;
+        background:${origin.color};color:#fff;font-size:10px;font-weight:bold;
         padding:2px 6px;border-radius:3px;white-space:nowrap;
         border:1px solid rgba(255,255,255,0.5);
-      ">🇮🇷 Iran</div>`,
+      ">${origin.flag} ${origin.label}</div>`,
       iconAnchor: [0, 10],
     });
-    const originLabel = L.marker(SOURCE_IRAN, {
-      icon: originIcon,
-      interactive: false,
-    }).addTo(this.map);
+    const originLabel = L.marker(origin.coords, { icon: originIcon, interactive: false }).addTo(this.map);
 
-    // Animated missile marker
-    const initialPos = slerp(SOURCE_IRAN, target, 0);
+    const initialPos = slerp(origin.coords, target, 0);
     const missileMarker = L.marker(initialPos, {
       icon: missileIcon(angle, Math.ceil(flightMs / 1000)),
       interactive: false,
@@ -407,21 +464,19 @@ export class App implements AfterViewInit, OnDestroy {
     }).addTo(this.map);
 
     const tick = () => {
+      const traj = this.iranTrajectory!;
+      const src = ORIGINS[traj.originKey].coords;
       const elapsed = Date.now() - startTime;
       const t = Math.min(elapsed / flightMs, 1);
-      const pos = slerp(SOURCE_IRAN, this.iranTrajectory!.target, t);
+      const pos = slerp(src, traj.target, t);
       const secondsLeft = Math.max(0, Math.ceil((flightMs - elapsed) / 1000));
-      const currentAngle = bearing(SOURCE_IRAN, this.iranTrajectory!.target);
-
       missileMarker.setLatLng(pos);
-      missileMarker.setIcon(missileIcon(currentAngle, secondsLeft));
-
+      missileMarker.setIcon(missileIcon(bearing(src, traj.target), secondsLeft));
       if (t >= 1) this.clearIranTrajectory();
     };
 
-    // Assign before tick() so the closure can read this.iranTrajectory.target
     this.iranTrajectory = {
-      startTime, target, line, originLabel, missileMarker,
+      originKey, startTime, target, line, originLabel, missileMarker,
       intervalId: null as unknown as ReturnType<typeof setInterval>,
     };
     tick();

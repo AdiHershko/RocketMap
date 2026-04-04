@@ -13,7 +13,13 @@ export interface CityAlert {
 const ALL_CLEAR_TITLE = 'האירוע הסתיים';
 const EARLY_WARNING_TITLE = 'התראה מקדימה';
 const EARLY_WARNING_DESC = 'בדקות הקרובות צפויות להתקבל התראות';
-const CLEAR_DISPLAY_MS = 2500; // how long to show green before removing
+const CLEAR_DISPLAY_MS = 2500;
+
+// Oref category numbers
+const CAT_EARLY_WARNING = new Set(['5', '14']);  // pre-alert
+const CAT_ALL_CLEAR     = new Set(['13']);        // all clear
+const CAT_AIRCRAFT      = new Set(['2']);         // hostile aircraft
+// cat 1 = rockets (default)
 
 @Injectable({ providedIn: 'root' })
 export class AlertService implements OnDestroy {
@@ -64,23 +70,24 @@ export class AlertService implements OnDestroy {
 
       let changed = false;
 
-      if (data.title === ALL_CLEAR_TITLE) {
+      const isAllClear = data.title === ALL_CLEAR_TITLE || CAT_ALL_CLEAR.has(data.cat);
+      const isEarlyWarning = CAT_EARLY_WARNING.has(data.cat) || data.desc?.includes(EARLY_WARNING_DESC);
+
+      if (isAllClear) {
         for (const city of data.data) {
           const existing = this.state.get(city);
           if (existing && !existing.clearing) {
-            // Mark as clearing — show green briefly then remove
             this.state.set(city, { ...existing, title: ALL_CLEAR_TITLE, clearing: true });
             changed = true;
             setTimeout(() => this.removeClearedCity(city), CLEAR_DISPLAY_MS);
           }
         }
       } else {
-        const effectiveTitle = data.desc?.includes(EARLY_WARNING_DESC)
-          ? EARLY_WARNING_TITLE
-          : data.title;
+        const effectiveTitle = isEarlyWarning ? EARLY_WARNING_TITLE : data.title;
+        const effectiveCat   = isEarlyWarning ? '5' : data.cat;
         for (const city of data.data) {
           this.state.set(city, {
-            cat: data.cat,
+            cat: effectiveCat,
             title: effectiveTitle,
             desc: data.desc,
             timestamp: Date.now(),
