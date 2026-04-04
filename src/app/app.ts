@@ -15,7 +15,8 @@ function styleForAlert(alert: CityAlert): L.PathOptions {
 }
 
 const SOURCE_IRAN: [number, number] = [32.4, 53.7]; // central Iran
-const IRAN_FLIGHT_MS = 12 * 60 * 1000;             // 12 minutes
+const flightMs_DEMO = 60 * 1000;             // 1 minute for demo
+const flightMs_REAL = 6.5 * 60 * 1000;      // 6.5 minutes for real alerts
 const EARLY_WARNING_TITLE = 'התראה מקדימה';
 
 function centroid(coords: [number, number][]): [number, number] {
@@ -101,16 +102,6 @@ function missileIcon(angle: number, secondsLeft: number): L.DivIcon {
   });
 }
 
-function makeDemo(
-  cities: [string, string][],
-  cat: string,
-  title: string,
-): Map<string, CityAlert> {
-  const now = Date.now();
-  return new Map(
-    cities.map(([city], i) => [city, { cat, title, desc: '', timestamp: now + i * 4000 }]),
-  );
-}
 
 interface IranTrajectory {
   startTime: number;
@@ -133,7 +124,7 @@ export class App implements AfterViewInit, OnDestroy {
   protected readonly isDemoActive = signal(false);
 
   private map!: L.Map;
-  private cityLayers = new Map<string, L.Layer>();
+  private cityLayers = new Map<string, { layer: L.Layer; title: string; cat: string }>();
   private iranTrajectory: IranTrajectory | null = null;
   private aircraftLayers: L.Layer[] = [];
   private alertSub!: Subscription;
@@ -147,22 +138,21 @@ export class App implements AfterViewInit, OnDestroy {
     ['בני ברק', 'רמת גן', 'גבעתיים', 'תל אביב - מרכז העיר'], // west (lon ~34.78–34.83)
   ];
 
-  private static readonly DEMO_SCENARIOS: Map<string, CityAlert>[] = [
-    makeDemo(
-      [['תל אביב - מרכז העיר', ''], ['רמת גן', ''], ['גבעתיים', ''], ['בני ברק', '']],
-      '1', 'ירי רקטות וטילים',
-    ),
-    makeDemo(
-      [['אשדוד', ''], ['אשקלון', ''], ['שדרות', ''], ['נתיבות', '']],
-      '1', 'ירי רקטות וטילים',
-    ),
-    makeDemo(
-      [['חיפה', ''], ['קריית ביאליק', ''], ['קריית מוצקין', ''], ['עכו', '']],
-      '2', 'חדירת כלי טיס עוין',
-    ),
+  // Lebanon rockets: north Israel, no early warning, east→west/north→south
+  private static readonly LEBANON_WAVES: string[][] = [
+    ['קריית שמונה', 'מטולה', 'שלומי'],
+    ['נהריה', 'כרמיאל'],
+    ['עכו', 'חיפה'],
   ];
-  private demoIndex = 0;
-  private demoRunning = false;
+
+  // Lebanon hostile aircraft: north→south flight path
+  private static readonly AIRCRAFT_WAVES: string[][] = [
+    ['מטולה', 'קריית שמונה'],
+    ['שלומי', 'נהריה'],
+    ['עכו', 'קריית ביאליק', 'חיפה'],
+  ];
+
+  protected demoRunning = false;
 
   constructor(
     private alertService: AlertService,
@@ -184,57 +174,113 @@ export class App implements AfterViewInit, OnDestroy {
     this.clearAircraftTrajectory();
   }
 
-  protected triggerDemo(): void {
-    if (this.demoRunning) return;
-    this.isDemoActive.set(true);
-    const total = App.DEMO_SCENARIOS.length + 1; // +1 for Iran scenario
-    if (this.demoIndex % total === 0) {
-      this.demoIndex++;
-      this.runIranDemo();
-    } else {
-      const scenario = App.DEMO_SCENARIOS[(this.demoIndex % total) - 1];
-      this.demoIndex++;
-      this.runDemoScenario(scenario);
-    }
-  }
+  protected startLebanonRocketsDemo(): void { this.runLebanonDemo(); }
+  protected startIranRocketsDemo(): void { this.runIranDemo(); }
+  protected startAircraftDemo(): void { this.runAircraftDemo(); }
 
   private async runIranDemo(): Promise<void> {
+    if (this.demoRunning) return;
     this.demoRunning = true;
+    this.isDemoActive.set(true);
     const accumulated = new Map<string, CityAlert>();
 
+    const demoStart = Date.now();
+
+    // Phase 1: Early warning waves east→west (~6s total)
     for (const wave of App.IRAN_WAVES) {
-      if (!this.demoRunning) break;
+      if (!this.demoRunning) { this.demoRunning = false; return; }
       const now = Date.now();
       for (const city of wave) {
         accumulated.set(city, { cat: '1', title: EARLY_WARNING_TITLE, desc: '', timestamp: now });
       }
       await this.applyState(new Map(accumulated));
-      await new Promise((r) => setTimeout(r, 2500));
+      await new Promise((r) => setTimeout(r, 2000));
     }
 
+    if (!this.demoRunning) { this.demoRunning = false; return; }
+
+    // Wait until 20s from demo start, then upgrade to rocket alert
+    await new Promise((r) => setTimeout(r, Math.max(0, 20000 - (Date.now() - demoStart))));
+    if (!this.demoRunning) { this.demoRunning = false; return; }
+
+    // Phase 2: Rocket alert (trajectory stays visible)
+    const rocketTime = Date.now();
+    for (const city of accumulated.keys()) {
+      accumulated.set(city, { cat: '1', title: 'ירי רקטות וטילים', desc: '', timestamp: rocketTime });
+    }
+    await this.applyState(new Map(accumulated));
+
+    // Wait 40s then clear (missile arrives at 60s from start)
+    await new Promise((r) => setTimeout(r, 40000));
+    if (!this.demoRunning) { this.demoRunning = false; return; }
+
+    // Phase 3: Clear
+    await this.clearCities(accumulated);
     this.demoRunning = false;
+  }
+
+  private async runLebanonDemo(): Promise<void> {
+    if (this.demoRunning) return;
+    this.demoRunning = true;
+    this.isDemoActive.set(true);
+    const accumulated = new Map<string, CityAlert>();
+
+    // Rocket alerts wave by wave from north (no early warning)
+    for (const wave of App.LEBANON_WAVES) {
+      if (!this.demoRunning) { this.demoRunning = false; return; }
+      const now = Date.now();
+      for (const city of wave) {
+        accumulated.set(city, { cat: '1', title: 'ירי רקטות וטילים', desc: '', timestamp: now });
+      }
+      await this.applyState(new Map(accumulated));
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+
+    if (!this.demoRunning) { this.demoRunning = false; return; }
+    await new Promise((r) => setTimeout(r, 3000));
+
+    await this.clearCities(accumulated);
+    this.demoRunning = false;
+  }
+
+  private async runAircraftDemo(): Promise<void> {
+    if (this.demoRunning) return;
+    this.demoRunning = true;
+    this.isDemoActive.set(true);
+    const accumulated = new Map<string, CityAlert>();
+
+    for (const wave of App.AIRCRAFT_WAVES) {
+      if (!this.demoRunning) { this.demoRunning = false; return; }
+      const now = Date.now();
+      for (const city of wave) {
+        accumulated.set(city, { cat: '2', title: 'חדירת כלי טיס עוין', desc: '', timestamp: now });
+      }
+      await this.applyState(new Map(accumulated));
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+
+    if (!this.demoRunning) { this.demoRunning = false; return; }
+    await new Promise((r) => setTimeout(r, 4000));
+    await this.clearCities(accumulated);
+    this.demoRunning = false;
+  }
+
+  private async clearCities(cities: Map<string, CityAlert>): Promise<void> {
+    const clearMap = new Map<string, CityAlert>();
+    for (const [city, alert] of cities) {
+      clearMap.set(city, { ...alert, clearing: true });
+    }
+    await this.applyState(clearMap);
+    await new Promise((r) => setTimeout(r, 2500));
+    await this.applyState(new Map());
   }
 
   protected clearDemo(): void {
     this.isDemoActive.set(false);
     this.demoRunning = false;
-    this.demoIndex = 0;
     this.applyState(new Map());
   }
 
-  private async runDemoScenario(scenario: Map<string, CityAlert>): Promise<void> {
-    this.demoRunning = true;
-    const accumulated = new Map<string, CityAlert>();
-
-    for (const [city, alert] of scenario.entries()) {
-      if (!this.demoRunning) break;
-      accumulated.set(city, { ...alert, timestamp: Date.now() });
-      await this.applyState(new Map(accumulated));
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-
-    this.demoRunning = false;
-  }
 
   private initMap(): void {
     this.map = L.map('map', { center: [31.5, 34.8], zoom: 8 });
@@ -250,11 +296,11 @@ export class App implements AfterViewInit, OnDestroy {
   }
 
   private async applyState(cities: Map<string, CityAlert>): Promise<void> {
-    for (const [city, layer] of this.cityLayers) {
+    for (const [city, entry] of this.cityLayers) {
       const updated = cities.get(city);
-      // Remove if gone, or if it just transitioned to clearing (force redraw in green)
-      if (!updated || updated.clearing) {
-        layer.remove();
+      // Remove if gone, clearing, or alert type changed (title/cat)
+      if (!updated || updated.clearing || updated.title !== entry.title || updated.cat !== entry.cat) {
+        entry.layer.remove();
         this.cityLayers.delete(city);
       }
     }
@@ -266,7 +312,7 @@ export class App implements AfterViewInit, OnDestroy {
         const layer = await this.buildLayer(city, alert);
         if (layer) {
           layer.addTo(this.map);
-          this.cityLayers.set(city, layer);
+          this.cityLayers.set(city, { layer, title: alert.title, cat: alert.cat });
         }
       }),
     );
@@ -277,7 +323,7 @@ export class App implements AfterViewInit, OnDestroy {
     this.activeAlerts.set([...cities.entries()].map(([city, alert]) => ({ city, alert })));
 
     if (newEntries.length > 0 && this.cityLayers.size > 0) {
-      const group = L.featureGroup([...this.cityLayers.values()]);
+      const group = L.featureGroup([...this.cityLayers.values()].map((e) => e.layer));
       this.map.fitBounds(group.getBounds().pad(0.3));
     }
   }
@@ -290,32 +336,37 @@ export class App implements AfterViewInit, OnDestroy {
       .map(([city]) => CITY_COORDINATES[city])
       .filter((c): c is [number, number] => !!c);
 
-    if (earlyWarnCoords.length === 0) {
-      this.clearIranTrajectory();
+    if (earlyWarnCoords.length > 0) {
+      const target = centroid(earlyWarnCoords);
+      const startTime = Math.min(
+        ...[...cities.values()]
+          .filter((a) => a.title === EARLY_WARNING_TITLE)
+          .map((a) => a.timestamp),
+      );
+
+      if (this.iranTrajectory) {
+        if (this.iranTrajectory.startTime === startTime) {
+          this.iranTrajectory.target = target;
+          this.iranTrajectory.line.setLatLngs(greatCirclePath(SOURCE_IRAN, target));
+          return;
+        }
+        this.clearIranTrajectory();
+      }
+
+      this.startIranTrajectory(startTime, target);
       return;
     }
 
-    const target = centroid(earlyWarnCoords);
-    const startTime = Math.min(
-      ...[...cities.values()]
-        .filter((a) => a.title === EARLY_WARNING_TITLE)
-        .map((a) => a.timestamp),
-    );
-
-    // Trajectory already running — just update the target if new cities were added
+    // No early warning — keep trajectory alive while cities are still active (rocket phase),
+    // clear only when all cities are gone or clearing
     if (this.iranTrajectory) {
-      if (this.iranTrajectory.startTime === startTime) {
-        this.iranTrajectory.target = target;
-        this.iranTrajectory.line.setLatLngs(greatCirclePath(SOURCE_IRAN, target));
-        return;
-      }
-      this.clearIranTrajectory();
+      const hasActiveCities = [...cities.values()].some((a) => !a.clearing);
+      if (!hasActiveCities) this.clearIranTrajectory();
     }
-
-    this.startIranTrajectory(startTime, target);
   }
 
   private startIranTrajectory(startTime: number, target: [number, number]): void {
+    const flightMs = this.isDemoActive() ? flightMs_DEMO : flightMs_REAL;
     const angle = bearing(SOURCE_IRAN, target);
 
     // Static dashed line from Iran to target
@@ -345,16 +396,16 @@ export class App implements AfterViewInit, OnDestroy {
     // Animated missile marker
     const initialPos = slerp(SOURCE_IRAN, target, 0);
     const missileMarker = L.marker(initialPos, {
-      icon: missileIcon(angle, Math.ceil(IRAN_FLIGHT_MS / 1000)),
+      icon: missileIcon(angle, Math.ceil(flightMs / 1000)),
       interactive: false,
       zIndexOffset: 1000,
     }).addTo(this.map);
 
     const tick = () => {
       const elapsed = Date.now() - startTime;
-      const t = Math.min(elapsed / IRAN_FLIGHT_MS, 1);
+      const t = Math.min(elapsed / flightMs, 1);
       const pos = slerp(SOURCE_IRAN, this.iranTrajectory!.target, t);
-      const secondsLeft = Math.max(0, Math.ceil((IRAN_FLIGHT_MS - elapsed) / 1000));
+      const secondsLeft = Math.max(0, Math.ceil((flightMs - elapsed) / 1000));
       const currentAngle = bearing(SOURCE_IRAN, this.iranTrajectory!.target);
 
       missileMarker.setLatLng(pos);

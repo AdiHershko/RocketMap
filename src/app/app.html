@@ -34,10 +34,15 @@
 
     <div class="demo-panel">
       <h3>Demo</h3>
-      <p class="demo-desc">Cycle through alert scenarios to test the map.</p>
       <div class="demo-buttons">
-        <button class="btn-demo" (click)="triggerDemo()">
-          {{ isDemoActive() ? 'Next scenario' : 'Start demo' }}
+        <button class="btn-demo" (click)="startLebanonRocketsDemo()" [disabled]="demoRunning">
+          🚀 Rockets — Lebanon
+        </button>
+        <button class="btn-demo" (click)="startIranRocketsDemo()" [disabled]="demoRunning">
+          🚀 Rockets — Iran
+        </button>
+        <button class="btn-demo" (click)="startAircraftDemo()" [disabled]="demoRunning">
+          ✈ Aircraft — Lebanon
         </button>
         @if (isDemoActive()) {
           <button class="btn-clear" (click)="clearDemo()">Clear</button>
