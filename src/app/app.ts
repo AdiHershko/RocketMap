@@ -187,6 +187,7 @@ export class App implements AfterViewInit, OnDestroy {
 
   protected toggleSidebar(): void {
     this.sidebarCollapsed.set(!this.sidebarCollapsed());
+    setTimeout(() => this.map?.invalidateSize(), 260);
   }
 
   private historySub!: Subscription;
