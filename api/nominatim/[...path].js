@@ -1,7 +1,10 @@
 export default async function handler(req, res) {
-  const path = req.url.replace('/api/nominatim', '');
+  const pathSegments = req.query.path || [];
+  const { path: _, ...queryParams } = req.query;
+  const queryString = new URLSearchParams(queryParams).toString();
+  const targetUrl = `https://nominatim.openstreetmap.org/${pathSegments.join('/')}${queryString ? '?' + queryString : ''}`;
 
-  const response = await fetch(`https://nominatim.openstreetmap.org${path}`, {
+  const response = await fetch(targetUrl, {
     headers: {
       'User-Agent': 'RocketMap/1.0 (israel-alert-map)',
       'Accept-Language': 'he',
