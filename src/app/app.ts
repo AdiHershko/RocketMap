@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import * as L from 'leaflet';
 import { AlertService, CityAlert, HistoryEntry } from './alert.service';
 import { CITY_COORDINATES } from './city-coordinates';
+import { CITY_POLYGONS } from './city-polygons';
 import { Subscription } from 'rxjs';
 
 // Cat numbers from Oref
@@ -624,20 +625,23 @@ export class App implements AfterViewInit, OnDestroy {
   }
 
   private buildLayer(city: string, alert: CityAlert): L.Layer | null {
-    const coords = CITY_COORDINATES[city];
-    if (!coords) return null;
-
     const style = styleForAlert(alert);
     const popup = `<b>${city}</b><br>${alert.title}`;
 
-    const marker = L.circleMarker(coords, {
-      ...style,
-      radius: 10,
-    }).bindPopup(popup);
+    const polygonPoints = CITY_POLYGONS[city];
+    if (polygonPoints?.length) {
+      const poly = L.polygon(polygonPoints as [number, number][], style).bindPopup(popup);
+      poly.on('mouseover', () => poly.setStyle({ fillOpacity: 0.7, weight: 3 }));
+      poly.on('mouseout', () => poly.setStyle({ fillOpacity: style.fillOpacity!, weight: style.weight! }));
+      return poly;
+    }
 
+    // Fallback: circle marker for cities without polygon data
+    const coords = CITY_COORDINATES[city];
+    if (!coords) return null;
+    const marker = L.circleMarker(coords, { ...style, radius: 10 }).bindPopup(popup);
     marker.on('mouseover', () => marker.setStyle({ fillOpacity: 0.7, weight: 3 }));
     marker.on('mouseout', () => marker.setStyle({ fillOpacity: style.fillOpacity!, weight: style.weight! }));
-
     return marker;
   }
 }
