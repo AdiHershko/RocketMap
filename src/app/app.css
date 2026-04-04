@@ -23,9 +23,49 @@
   color: #e0e0e0;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  padding: 20px 16px;
+  overflow: hidden;
+  padding: 12px 8px;
+  gap: 0;
+  transition: width 0.25s ease;
+}
+
+.sidebar.collapsed {
+  width: 36px;
+}
+
+.sidebar-toggle-btn {
+  flex-shrink: 0;
+  background: #2a2a4a;
+  border: 1px solid #444;
+  color: #aaa;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 6px;
+  font-size: 0.75rem;
+  width: 100%;
+  margin-bottom: 12px;
+  transition: background 0.15s;
+}
+
+.sidebar-toggle-btn:hover {
+  background: #3a3a5a;
+}
+
+.sidebar-content {
+  display: flex;
+  flex-direction: column;
   gap: 20px;
+  overflow-y: auto;
+  flex: 1;
+  min-width: 248px;
+  padding: 8px 8px 8px 8px;
+  opacity: 1;
+  transition: opacity 0.2s;
+}
+
+.sidebar.collapsed .sidebar-content {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .sidebar-header h1 {

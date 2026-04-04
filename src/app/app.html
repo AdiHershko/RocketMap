@@ -1,5 +1,9 @@
 <div class="layout">
-  <aside class="sidebar">
+  <aside class="sidebar" [class.collapsed]="sidebarCollapsed()">
+    <button class="sidebar-toggle-btn" (click)="toggleSidebar()" [title]="sidebarCollapsed() ? 'Expand' : 'Collapse'">
+      {{ sidebarCollapsed() ? '▶' : '◀' }}
+    </button>
+    <div class="sidebar-content">
     <div class="sidebar-header">
       <h1>🚀 RocketMap</h1>
       <p class="subtitle">Israel Missile Alert Monitor</p>
@@ -53,6 +57,7 @@
     <div class="data-source">
       <p>Data: <a href="https://www.oref.org.il" target="_blank">Pikud HaOref</a></p>
       <p>Polling every 3 seconds</p>
+    </div>
     </div>
   </aside>
 

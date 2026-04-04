@@ -122,6 +122,11 @@ export class App implements AfterViewInit, OnDestroy {
   protected readonly activeAlerts = signal<{ city: string; alert: CityAlert }[]>([]);
   protected readonly hasAlerts = signal(false);
   protected readonly isDemoActive = signal(false);
+  protected readonly sidebarCollapsed = signal(window.innerWidth < 768);
+
+  protected toggleSidebar(): void {
+    this.sidebarCollapsed.set(!this.sidebarCollapsed());
+  }
 
   private map!: L.Map;
   private cityLayers = new Map<string, { layer: L.Layer; title: string; cat: string }>();
