@@ -8,8 +8,12 @@ export default async function handler(req, res) {
     headers: {
       'X-Requested-With': 'XMLHttpRequest',
       Referer: 'https://www.oref.org.il/',
-      'User-Agent': 'Mozilla/5.0',
-      Accept: 'application/json',
+      Origin: 'https://www.oref.org.il',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      Accept: 'application/json, text/plain, */*',
+      'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
     },
   });
 
