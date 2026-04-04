@@ -187,6 +187,8 @@ export class App implements AfterViewInit, OnDestroy {
   protected readonly sidebarCollapsed = signal(window.innerWidth < 768);
   protected readonly activeTab = signal<'live' | 'history'>('live');
   protected readonly alertHistory = signal<HistoryEntry[]>([]);
+  protected readonly now = signal(Date.now());
+  private tickInterval!: ReturnType<typeof setInterval>;
 
   protected toggleSidebar(): void {
     this.sidebarCollapsed.set(!this.sidebarCollapsed());
@@ -256,14 +258,23 @@ export class App implements AfterViewInit, OnDestroy {
     );
     this.alertService.startPolling(3000);
     this.historySub = this.alertService.history$.subscribe((h) => this.alertHistory.set(h));
+    this.tickInterval = setInterval(() => this.now.set(Date.now()), 1000);
   }
 
   ngOnDestroy(): void {
     this.alertService.stopPolling();
     this.alertSub?.unsubscribe();
     this.historySub?.unsubscribe();
+    clearInterval(this.tickInterval);
     this.clearIranTrajectory();
     this.clearAircraftTrajectory();
+  }
+
+  protected formatElapsed(timestamp: number): string {
+    const secs = Math.floor((this.now() - timestamp) / 1000);
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
   }
 
   protected startLebanonRocketsDemo(): void { this.runLebanonDemo(); }

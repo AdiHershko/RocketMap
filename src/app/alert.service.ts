@@ -96,12 +96,23 @@ export class AlertService implements OnDestroy {
           }
         }
       } else {
+        // When rockets arrive, drop any lingering early-warning cities
+        if (type === 'rockets') {
+          for (const [city, alert] of this.state) {
+            if (typeFromTitle(alert.title, alert.desc) === 'early-warning') {
+              this.state.delete(city);
+              changed = true;
+            }
+          }
+        }
+        const now = Date.now();
         for (const city of data.data) {
+          const existing = this.state.get(city);
           this.state.set(city, {
             cat: effectiveCat,
             title: effectiveTitle,
             desc: data.desc,
-            timestamp: Date.now(),
+            timestamp: existing ? existing.timestamp : now, // preserve original time
           });
           changed = true;
         }

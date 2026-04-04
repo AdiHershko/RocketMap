@@ -183,6 +183,15 @@
   direction: rtl;
 }
 
+.city-timer {
+  margin-right: auto;
+  margin-left: 0;
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: var(--txt2);
+  opacity: 0.7;
+}
+
 .city-list li.aircraft {
   background: rgba(51, 119, 255, 0.06);
   border-left-color: var(--blue);

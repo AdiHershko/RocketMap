@@ -20,12 +20,13 @@
           <div class="alert-badge">ACTIVE ALERT</div>
           <ul class="city-list">
             @for (entry of activeAlerts(); track entry.city) {
-              <li [class.aircraft]="entry.alert.cat === '2'"
-                  [class.early]="entry.alert.cat === '5'">
+              <li [class.aircraft]="entry.alert.title.includes('כלי טיס')"
+                  [class.early]="entry.alert.title.includes('בדקות הקרובות')">
                 <span class="city-dot"
-                  [class.aircraft]="entry.alert.cat === '2'"
-                  [class.early]="entry.alert.cat === '5'"></span>
+                  [class.aircraft]="entry.alert.title.includes('כלי טיס')"
+                  [class.early]="entry.alert.title.includes('בדקות הקרובות')"></span>
                 {{ entry.city }}
+                <span class="city-timer">{{ formatElapsed(entry.alert.timestamp) }}</span>
               </li>
             }
           </ul>
