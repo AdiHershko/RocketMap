@@ -318,6 +318,20 @@
   gap: 5px;
 }
 
+.history-search {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--pnl);
+  border: 1px solid var(--brd);
+  border-radius: 6px;
+  color: var(--tx);
+  font-size: 0.8rem;
+  outline: none;
+}
+.history-search:focus {
+  border-color: var(--accent);
+}
+
 .history-empty {
   text-align: center;
   padding: 20px 8px;

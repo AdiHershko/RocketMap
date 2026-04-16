@@ -20,8 +20,35 @@ export interface HistoryEntry {
 }
 
 const ALL_CLEAR_TITLE = 'האירוע הסתיים';
-const CLEAR_DISPLAY_MS  = 60 * 1000;       // 60s green clearing phase
-const TRACE_DISPLAY_MS  = 5 * 60 * 1000;   // 5min faded post-alert trace
+const CLEAR_DISPLAY_MS       = 60 * 1000;        // 60s green clearing phase
+const TRACE_DISPLAY_MS       = 5 * 60 * 1000;    // 5min faded post-alert trace (live session)
+const CLEAR_TRACE_DISPLAY_MS = 10 * 60 * 1000;   // 10min green trace after all-clear (history bootstrap)
+const ALERT_LOOKBACK_MS      = 30 * 60 * 1000;   // 30min lookback for active alerts with no all-clear
+
+/**
+ * Parse an Israel-local date string ("DD/MM/YYYY HH:MM:SS") into a UTC timestamp.
+ * Uses the browser's Intl API to handle DST correctly.
+ */
+function parseIsraelDate(dateStr: string): number | null {
+  // Support both "DD/MM/YYYY HH:MM:SS" and "YYYY-MM-DD HH:MM:SS"
+  let dd: string, mm: string, yyyy: string, hh: string, min: string, ss: string;
+  const m1 = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})$/);
+  const m2 = dateStr.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+  if (m1) { [, dd, mm, yyyy, hh, min, ss] = m1; }
+  else if (m2) { [, yyyy, mm, dd, hh, min, ss] = m2; }
+  else return null;
+  // Determine current Israel UTC offset via Intl (handles DST)
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jerusalem',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(now).map((p) => [p.type, p.value]));
+  const israelNowMs = Date.UTC(+parts['year'], +parts['month'] - 1, +parts['day'], +parts['hour'], +parts['minute'], +parts['second']);
+  const offsetMs = israelNowMs - now.getTime();
+  return Date.UTC(+yyyy, +mm - 1, +dd, +hh, +min, +ss) - offsetMs;
+}
 
 /**
  * Oref alert IDs are Windows FILETIME values (100-nanosecond ticks since 1601-01-01).
@@ -38,7 +65,7 @@ function alertIdToMs(id: string): number | null {
 }
 
 export function typeFromTitle(title: string, desc: string): 'all-clear' | 'early-warning' | 'aircraft' | 'rockets' {
-  if (title.includes('הסתיים')) return 'all-clear';
+  if (title.includes('הסתיים') || desc?.includes('הסתיים') || desc?.includes('יכולים לצאת')) return 'all-clear';
   if (title.includes('בדקות הקרובות') || desc?.includes('בדקות הקרובות')) return 'early-warning';
   if (title.includes('כלי טיס')) return 'aircraft';
   return 'rockets';
@@ -53,7 +80,8 @@ export class AlertService implements OnDestroy {
   readonly history$ = new BehaviorSubject<HistoryEntry[]>([]);
 
   startPolling(intervalMs = 3000): void {
-    this.fetchAlerts();
+    Promise.all([this.bootstrapFromCache(), this.bootstrapFromHistory()])
+      .then(() => this.fetchAlerts());
     this.intervalId = setInterval(() => this.fetchAlerts(), intervalMs);
   }
 
@@ -66,6 +94,114 @@ export class AlertService implements OnDestroy {
 
   ngOnDestroy(): void {
     this.stopPolling();
+  }
+
+  private async bootstrapFromCache(): Promise<void> {
+    try {
+      const res = await fetch(`${environment.orefBase}/recent-alert`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json() as { id: string; cat: string; title: string; data: string[]; desc: string; _cachedAt: number } | null;
+      if (!data?.data?.length) return;
+
+      const age = Date.now() - data._cachedAt;
+      if (age < 0 || age > ALERT_LOOKBACK_MS) return;
+
+      const type = typeFromTitle(data.title, data.desc);
+      if (type === 'all-clear') return;
+
+      const effectiveCat = type === 'early-warning' ? '5' : type === 'aircraft' ? '2' : '1';
+      let changed = false;
+
+      for (const city of data.data) {
+        if (this.state.has(city)) continue;
+        this.state.set(city, {
+          cat: effectiveCat,
+          title: data.title,
+          desc: data.desc,
+          timestamp: data._cachedAt,
+        });
+        changed = true;
+      }
+
+      if (changed) this.activeCities$.next(new Map(this.state));
+    } catch {
+      // ignore
+    }
+  }
+
+  private async bootstrapFromHistory(): Promise<void> {
+    try {
+      const res = await fetch(
+        `${environment.orefBase}/WarningMessages/alert/History/AlertsHistory.json`,
+        { cache: 'no-store', headers: { 'X-Requested-With': 'XMLHttpRequest', Referer: 'https://www.oref.org.il/' } },
+      );
+      if (!res.ok) return;
+      const text = (await res.text()).trim().replace(/^\uFEFF/, '');
+      if (!text) return;
+
+      const raw = JSON.parse(text);
+      const entries: Array<{ alertDate: string; title: string; data: string; category: string }> =
+        Array.isArray(raw) ? raw : Object.values(raw);
+      const now = Date.now();
+
+      // Build a map of city → most recent history entry within the lookback window
+      const cityLatest = new Map<string, { ts: number; type: string; cat: string; title: string }>();
+      for (const entry of entries) {
+        const ts = parseIsraelDate(entry.alertDate);
+        if (!ts || ts < now - ALERT_LOOKBACK_MS || ts > now) continue;
+        const type = typeFromTitle(entry.title, '');
+        for (const city of entry.data.split(/\r?\n/).map((c) => c.trim()).filter(Boolean)) {
+          const prev = cityLatest.get(city);
+          if (!prev || ts > prev.ts) {
+            cityLatest.set(city, { ts, type, cat: entry.category ?? '1', title: entry.title });
+          }
+        }
+      }
+
+      let changed = false;
+      for (const [city, info] of cityLatest) {
+        const existing = this.state.get(city);
+        const age = now - info.ts;
+
+        if (info.type === 'all-clear') {
+          if (age > CLEAR_TRACE_DISPLAY_MS) continue;
+          // Don't override if already in clearing/trace state
+          if (existing?.clearing || existing?.trace) continue;
+          // Don't override if existing state is more recent (e.g. a new alert after this all-clear)
+          if (existing && existing.timestamp > info.ts) continue;
+          // All-clear was the last event → faded green trace (overrides cache-bootstrapped active)
+          this.state.set(city, { cat: info.cat, title: ALL_CLEAR_TITLE, desc: '', timestamp: info.ts, trace: true });
+          setTimeout(() => this.removeTraceCity(city), CLEAR_TRACE_DISPLAY_MS - age);
+        } else {
+          if (existing) continue; // don't overwrite any existing state with an active entry
+          // No all-clear seen → show as active alert, no auto-expire
+          this.state.set(city, { cat: info.cat, title: info.title, desc: '', timestamp: info.ts });
+        }
+        changed = true;
+      }
+
+      if (changed) this.activeCities$.next(new Map(this.state));
+
+      // Seed history tab with entries from AlertsHistory
+      const existingIds = new Set(this.history$.value.map((h) => h.id));
+      const historyEntries: HistoryEntry[] = entries
+        .map((entry) => {
+          const ts = parseIsraelDate(entry.alertDate);
+          if (!ts) return null;
+          const cities = entry.data.split(/\r?\n/).map((c) => c.trim()).filter(Boolean);
+          if (!cities.length) return null;
+          const cat = String(entry.category ?? '1');
+          return { id: entry.alertDate, cat, title: entry.title, cities, timestamp: ts } satisfies HistoryEntry;
+        })
+        .filter((e): e is HistoryEntry => !!e && !existingIds.has(e.id))
+        .sort((a, b) => b.timestamp - a.timestamp);
+
+      if (historyEntries.length > 0) {
+        this.history$.next([...historyEntries, ...this.history$.value].slice(0, 200));
+      }
+    } catch {
+      // ignore
+    }
   }
 
   private async fetchAlerts(): Promise<void> {

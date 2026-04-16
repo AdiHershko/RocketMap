@@ -60,10 +60,17 @@
 
     @if (activeTab() === 'history') {
       <div class="history-panel">
-        @if (alertHistory().length === 0) {
-          <div class="history-empty">No alerts recorded yet</div>
+        <input
+          class="history-search"
+          type="search"
+          placeholder="Search by city..."
+          [value]="historySearch()"
+          (input)="historySearch.set($any($event.target).value)"
+        />
+        @if (filteredHistory().length === 0) {
+          <div class="history-empty">{{ alertHistory().length === 0 ? 'No alerts recorded yet' : 'No results' }}</div>
         }
-        @for (entry of alertHistory(); track entry.id) {
+        @for (entry of filteredHistory(); track entry.id) {
           <div class="history-card" [class]="'hc-cat-' + entry.cat">
             <div class="hc-top">
               <span class="hc-badge" [class]="'hc-badge-' + entry.cat">{{ categoryLabel(entry.title) }}</span>

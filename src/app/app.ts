@@ -1,4 +1,4 @@
-import { Component, OnDestroy, AfterViewInit, signal } from '@angular/core';
+import { Component, OnDestroy, AfterViewInit, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import * as L from 'leaflet';
 import { AlertService, CityAlert, HistoryEntry } from './alert.service';
@@ -182,6 +182,14 @@ export class App implements AfterViewInit, OnDestroy {
   protected readonly sidebarCollapsed = signal(window.innerWidth < 768);
   protected readonly activeTab = signal<'live' | 'history'>('live');
   protected readonly alertHistory = signal<HistoryEntry[]>([]);
+  protected readonly historySearch = signal('');
+  protected readonly filteredHistory = computed(() => {
+    const q = this.historySearch().trim().toLowerCase();
+    if (!q) return this.alertHistory();
+    return this.alertHistory().filter((e) =>
+      e.cities.some((c) => c.toLowerCase().includes(q))
+    );
+  });
   protected readonly now = signal(Date.now());
   private tickInterval!: ReturnType<typeof setInterval>;
 
