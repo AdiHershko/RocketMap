@@ -2,9 +2,17 @@ const ALERTS_PATH  = '/WarningMessages/alert/alerts.json';
 const CACHE_KEY    = 'https://oref-internal.cache/recent-alert';
 const CACHE_TTL_S  = 300; // 5 minutes
 
+function isSafePath(p) {
+  return typeof p === 'string' && /^[a-zA-Z0-9/._-]*$/.test(p) && !p.includes('..');
+}
+
 export async function onRequest(context) {
   const url  = new URL(context.request.url);
   const path = url.pathname.replace('/api/oref', '');
+
+  if (!isSafePath(path)) {
+    return new Response(JSON.stringify({ error: 'Invalid path' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
 
   // Custom endpoint: return the last alert we cached from a live poll
   if (path === '/recent-alert') {

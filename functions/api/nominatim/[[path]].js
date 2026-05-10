@@ -1,6 +1,12 @@
+const ALLOWED_NOMINATIM_PATHS = new Set(['/search', '/reverse', '/lookup', '']);
+
 export async function onRequest(context) {
   const url = new URL(context.request.url);
   const path = url.pathname.replace('/api/nominatim', '');
+
+  if (!ALLOWED_NOMINATIM_PATHS.has(path)) {
+    return new Response(JSON.stringify({ error: 'Invalid path' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
 
   const response = await fetch(`https://nominatim.openstreetmap.org${path}${url.search}`, {
     headers: {
